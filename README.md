@@ -114,8 +114,9 @@ The `/overboard` assistant drives everything through the bundled MCP server (key
   `get_project_events(project, limit)`.
 - **Write:** `set_project_summary(project, text)`,
   `record_digest(project, narrative, review)`,
-  `set_architecture(slug, text, mermaid)`, `flag_for_review(project, note)`,
-  `record_status(project, note)`.
+  `set_architecture(slug, text, mermaid)`, `set_prompts(slug, items)`,
+  `set_setup(slug, text)`, `set_snippets(slug, items)`,
+  `flag_for_review(project, note)`, `record_status(project, note)`.
 - **Dashboard:** `launch_dashboard()` — start the dashboard server, return its URL.
 
 The `cto-assistant` skill is the assistant's full playbook (routine + writing

@@ -522,6 +522,8 @@ function repoBadge(r) {
 const AN_TABS = [
   ["overview", "Overview"],
   ["prompts", "Prompts"],
+  ["setup", "Setup & run"],
+  ["snippets", "Snippets"],
   ["db", "Data shape"],
 ];
 
@@ -590,6 +592,7 @@ function analysisBlock(slug) {
     const b = document.createElement("button");
     let n = "";
     if (key === "prompts") n = ` (${d.prompts.length})`;
+    if (key === "snippets") n = ` (${(d.snippets || []).length})`;
     if (key === "db") n = ` (${d.db.length})`;
     b.textContent = label + n;
     b.className = a.tab === key ? "on" : "";
@@ -602,6 +605,8 @@ function analysisBlock(slug) {
   body.className = "tab-body";
   if (a.tab === "overview") body.appendChild(overviewTab(d));
   else if (a.tab === "prompts") body.appendChild(promptsTab(d));
+  else if (a.tab === "setup") body.appendChild(setupTab(d));
+  else if (a.tab === "snippets") body.appendChild(snippetsTab(d));
   else if (a.tab === "db") body.appendChild(dbTab(d));
   box.appendChild(body);
   return box;
@@ -637,19 +642,29 @@ function overviewTab(d) {
 
 function promptsTab(d) {
   const frag = document.createElement("div");
+  const isStatic = d.prompts_source !== "agent";
   if (!d.prompts.length) {
-    frag.appendChild(note("No prompts written for LLMs were detected in this repo."));
+    frag.appendChild(note(VIEW.agent_has_run
+      ? "No LLM prompts found in this repo."
+      : "Run /overboard — your assistant reads the code and extracts the real prompts. (Noisy keyword guesses show here until then.)"));
     return frag;
   }
+  const banner = document.createElement("p");
+  banner.className = "subtle prompts-src";
+  banner.textContent = isStatic
+    ? "⚠ Static keyword guesses — often noisy. Run /overboard for the real prompts."
+    : "Extracted by your assistant from the actual code.";
+  frag.appendChild(banner);
+
   for (const f of d.prompts) {
     const el = document.createElement("div");
-    el.className = "finding";
+    el.className = "finding" + (isStatic ? " dim" : "");
     const meta = document.createElement("div");
     meta.className = "meta";
 
     const kind = document.createElement("span");
     kind.className = "kind";
-    kind.textContent = f.name || f.kind;
+    kind.textContent = f.name || f.kind || "prompt";
     meta.appendChild(kind);
 
     if (f.dynamic) {
@@ -660,15 +675,80 @@ function promptsTab(d) {
       meta.appendChild(dyn);
     }
 
-    const loc = document.createElement("span");
-    loc.className = "loc";
-    loc.textContent = `${f.file}:${f.line}`;
-    meta.appendChild(loc);
+    if (f.file) {
+      const loc = document.createElement("span");
+      loc.className = "loc";
+      loc.textContent = f.line ? `${f.file}:${f.line}` : f.file;
+      meta.appendChild(loc);
+    }
 
     const code = document.createElement("code");
     code.textContent = f.text;
     el.appendChild(meta);
     el.appendChild(code);
+    if (f.note) {
+      const nt = document.createElement("div");
+      nt.className = "finding-note subtle";
+      nt.textContent = f.note;
+      el.appendChild(nt);
+    }
+    frag.appendChild(el);
+  }
+  return frag;
+}
+
+function setupTab(d) {
+  const frag = document.createElement("div");
+  if (!d.setup) {
+    frag.appendChild(note(VIEW.agent_has_run
+      ? "No setup/run instructions yet."
+      : "Run /overboard — your assistant will write how to install and run this project."));
+    return frag;
+  }
+  const pre = document.createElement("pre");
+  pre.className = "setup-text";
+  pre.textContent = d.setup;
+  frag.appendChild(pre);
+  return frag;
+}
+
+function snippetsTab(d) {
+  const frag = document.createElement("div");
+  const items = d.snippets || [];
+  if (!items.length) {
+    frag.appendChild(note(VIEW.agent_has_run
+      ? "No key snippets picked out yet."
+      : "Run /overboard — your assistant will surface a few key code snippets."));
+    return frag;
+  }
+  for (const s of items) {
+    const el = document.createElement("div");
+    el.className = "finding";
+    const meta = document.createElement("div");
+    meta.className = "meta";
+
+    const kind = document.createElement("span");
+    kind.className = "kind";
+    kind.textContent = s.title || "snippet";
+    meta.appendChild(kind);
+
+    if (s.file) {
+      const loc = document.createElement("span");
+      loc.className = "loc";
+      loc.textContent = s.line ? `${s.file}:${s.line}` : s.file;
+      meta.appendChild(loc);
+    }
+    el.appendChild(meta);
+
+    const code = document.createElement("code");
+    code.textContent = s.code || "";
+    el.appendChild(code);
+    if (s.note) {
+      const nt = document.createElement("div");
+      nt.className = "finding-note subtle";
+      nt.textContent = s.note;
+      el.appendChild(nt);
+    }
     frag.appendChild(el);
   }
   return frag;

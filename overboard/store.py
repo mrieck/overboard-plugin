@@ -118,7 +118,17 @@ def save_state(state: dict) -> None:
 
 # ---- agent-owned AI content (ai.json) -------------------------------------
 def fresh_ai() -> dict:
-    return {"summaries": {}, "digests": {}, "architecture": {}}
+    # All agent-owned, keyed by name (summaries/digests) or repo slug
+    # (architecture/prompts/setup/snippets). Written only via the MCP set_*
+    # tools; the dashboard overlays these onto the static analysis at read time.
+    return {
+        "summaries": {},
+        "digests": {},
+        "architecture": {},
+        "prompts": {},
+        "setup": {},
+        "snippets": {},
+    }
 
 
 def load_ai() -> dict:

@@ -244,6 +244,16 @@ html, body {
   display: block; font-family: "SF Mono", "JetBrains Mono", monospace;
   font-size: 11px; color: var(--text); white-space: pre-wrap; word-break: break-all;
 }
+.finding.dim { opacity: 0.5; }
+.finding-note { margin-top: 5px; font-size: 11px; font-style: italic; }
+.prompts-src { margin: 0 0 10px; font-size: 11px; }
+.setup-text {
+  font-family: "SF Mono", "JetBrains Mono", monospace;
+  font-size: 12px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; margin: 0;
+  white-space: pre-wrap; word-break: break-word; line-height: 1.55;
+}
 .table-card {
   border: 1px solid var(--border); border-radius: 8px;
   padding: 8px 10px; margin-bottom: 8px; background: var(--panel-2);

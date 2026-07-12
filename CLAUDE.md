@@ -71,12 +71,26 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
   and — **always shown, no button** — each local repo's analysis (Overview /
   Prompts / Data shape).
 
-**Analysis is automatic.** It's static-only (no API), so there's no "analyze"
-button: `Api._ensure_analyses` runs in a background thread (kicked on init and on
-every refresh) and analyzes any local clone whose cache is missing or stale
-(HEAD moved / `_ANALYZER_VERSION` bumped), caching into `state.json`. The frontend
-`loadAnalyses` reads it on project select (and re-pulls on Refresh). Keep it
-buttonless — don't gate free static work behind a click.
+**Analysis is automatic.** The *static* part (structure, DB shape, and a noisy
+keyword prompt scan) runs buttonless: `Api._ensure_analyses` runs in a background
+thread (kicked on init and on every refresh) and analyzes any local clone whose
+cache is missing or stale (HEAD moved / `_ANALYZER_VERSION` bumped), caching into
+`state.json`. The frontend `loadAnalyses` reads it on project select (and re-pulls
+on Refresh).
+
+**The good panels are assistant-owned.** The static prompt scanner
+(`analysis.py` keyword regexes) is *intentionally kept only as a dim fallback* —
+it false-positives badly (it even flags its own regexes). The real content comes
+from the `/overboard` assistant, which delegates per-repo extraction to the
+**`repo-analyst` subagent** (`agents/repo-analyst.md`, pinned to Sonnet, read-only,
+returns JSON) and persists it via the MCP tools `set_prompts` / `set_setup` /
+`set_snippets` / `set_architecture` into `ai.json`. `Api._overlay_ai` layers those
+over the static result at read time: agent prompts *replace* the static ones (and
+`prompts_source` flips `static`→`agent`; the UI dims static guesses), and setup /
+snippets / architecture come straight from `ai.json`. This is gated to
+recently-active projects via `get_pending_work` — never "scan all repos at once."
+When adding a new agent-owned panel, follow this exact path: new `ai.json` key →
+`fresh_ai()` → a `set_*` MCP tool → `_overlay_ai` → a frontend tab.
 
 Frontend is vanilla HTML/JS (`web/index.html`, `app.js`, `styles.css`), no build
 step, `fetch('/api/<method>')` to the Python `Api`. Mermaid is vendored offline.

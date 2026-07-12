@@ -31,15 +31,39 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
    - If **`need_digest`**: `get_project_events(project)` to read what the team
      just finished, then **`record_digest(project, narrative, review)`** — see
      *Writing digests*.
-   - Optionally (first time you see a repo, or on a big structural change):
-     `get_repo_analysis(slug)` and **`set_architecture(slug, text, mermaid)`** —
-     see *Describing architecture*.
+   - **Refresh the dashboard panels** for each *local* repo (see *Maintaining
+     the panels* below) — real prompts, setup/run, snippets, architecture.
 3. Flag anything genuinely worth the CTO's eyes with
    **`flag_for_review(project, note)`** — risky changes, decisions made, things
    left unfinished, things to test. Don't flag routine progress.
 
 Then you're done until the next pass. Under `/loop`, only act when
 `get_pending_work` returns something — idle projects should cost nothing.
+
+## Maintaining the panels (delegate to a subagent)
+
+The dashboard's Prompts / Setup & run / Snippets / Architecture panels are
+**yours** — the built-in static scanner is a noisy keyword-matcher kept only as a
+dim fallback, so replace it with real analysis. Because reading a whole repo is
+bulky, **delegate it to the `repo-analyst` subagent** (it's pinned to a cheaper
+model) rather than reading everything yourself:
+
+1. Only for projects `get_pending_work` returned (i.e. worked on recently) —
+   never scan all projects at once.
+2. `list_projects` to get each repo's local `path` (skip repos with no local
+   clone on this machine).
+3. Spawn the **`repo-analyst`** subagent (via the Task tool) once per local repo,
+   giving it the `slug` and `path`. It reads the clone and returns a JSON object
+   with `prompts`, `setup`, `snippets`, `architecture`, `mermaid` — it does not
+   write anything itself.
+4. Persist its findings with the write tools:
+   **`set_prompts(slug, items)`**, **`set_setup(slug, text)`**,
+   **`set_snippets(slug, items)`**, **`set_architecture(slug, text, mermaid)`**.
+   Pass through only non-empty results.
+
+Skip a repo whose clone HEAD hasn't moved since you last refreshed it — the
+pending-work gate already keeps this to active repos, so most passes touch one or
+two repos, not ten.
 
 ## Writing summaries (`set_project_summary`)
 
@@ -57,13 +81,16 @@ From the project's recent finished-work events (each has the assistant's closing
   things genuinely worth attention. Prefer "auth refactor landed but tests not
   run" over "made progress".
 
-## Describing architecture (`set_architecture`)
+## The panels themselves
 
-From `get_repo_analysis`'s `manifest_digest` (layout, entrypoints, README) plus
-the detected prompts/DB shape: 2–4 concrete sentences on what the project is, how
-it's organized, and its stack. Infer cautiously. You may also pass a Mermaid
-`flowchart` string to replace the auto-generated architecture graph with a
-smarter one.
+The `repo-analyst` subagent does the extraction (its own instructions define
+what a *real* prompt is vs plumbing, how to write setup/run, which snippets to
+pick, and the architecture summary). Your job is to spawn it for the right repos
+and persist what it returns. If you ever do it yourself instead of delegating,
+hold the same bar: real prompts only (no regexes/SQL/README prose), concrete
+install-and-run steps, a few genuinely useful snippets, and a cautious 2–4
+sentence architecture summary (+ optional Mermaid `flowchart`). You can still
+call `get_repo_analysis(slug)` for the static structure/DB shape as context.
 
 ## Standups (when the CTO just asks)
 

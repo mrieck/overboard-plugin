@@ -381,20 +381,34 @@ class Api:
             "window_days": self.config.get("commit_window_days", 30),
         }
 
-    def _overlay_arch(self, slug: str, result: dict) -> dict:
-        """Overlay agent-written architecture (ai.json) onto a static analysis
-        result: prose text, and optionally a richer Mermaid graph."""
-        arch = store.load_ai().get("architecture", {}).get(slug) or {}
+    def _overlay_ai(self, slug: str, result: dict) -> dict:
+        """Overlay the agent-owned panels (ai.json) onto a static analysis
+        result. Architecture prose + Mermaid, real prompts (which replace the
+        noisy static guesses — those stay only as a dim fallback), setup/run
+        instructions, and key code snippets."""
+        ai = store.load_ai()
+        result = dict(result)
+
+        arch = ai.get("architecture", {}).get(slug) or {}
         if arch.get("text"):
-            result = {**result, "architecture": arch["text"]}
+            result["architecture"] = arch["text"]
         if arch.get("mermaid"):
-            result = {**result, "diagrams": {**result.get("diagrams", {}),
-                                             "architecture": arch["mermaid"]}}
+            result["diagrams"] = {**result.get("diagrams", {}), "architecture": arch["mermaid"]}
+
+        pr = ai.get("prompts", {}).get(slug) or {}
+        if pr.get("items"):
+            result["prompts"] = pr["items"]
+            result["prompts_source"] = "agent"
+        else:
+            result["prompts_source"] = "static"  # keyword guesses; show dimmed
+
+        result["setup"] = (ai.get("setup", {}).get(slug) or {}).get("text", "")
+        result["snippets"] = (ai.get("snippets", {}).get(slug) or {}).get("items", [])
         return result
 
     def get_analysis(self, slug: str):
         cached = self.state.get("analysis", {}).get(slug)
-        return self._overlay_arch(slug, cached) if cached else None
+        return self._overlay_ai(slug, cached) if cached else None
 
     # ---- actions --------------------------------------------------------
     def refresh(self) -> dict:
@@ -451,14 +465,14 @@ class Api:
         cached = self.state.get("analysis", {}).get(slug)
         if (cached and head and cached.get("head") == head
                 and cached.get("analyzer_version") == analysis._ANALYZER_VERSION):
-            return self._overlay_arch(slug, cached)
+            return self._overlay_ai(slug, cached)
         try:
             result = analysis.analyze_repo(path, slug)  # static only — no API
         except Exception as e:
             return {"error": f"analysis failed: {e}"}
         self.state.setdefault("analysis", {})[slug] = result
         store.save_state(self.state)
-        return self._overlay_arch(slug, result)
+        return self._overlay_ai(slug, result)
 
     def _kick_analyses(self) -> None:
         """Spawn a background pass that analyzes every local clone whose cache is
