@@ -12,7 +12,8 @@ import shutil
 import subprocess
 import sys
 import threading
-from datetime import datetime, timedelta, timezone
+import uuid
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -55,6 +56,15 @@ def _updated_at(repo: dict) -> datetime:
 
 def _slug_signature(slugs: list[str]) -> str:
     return hashlib.sha1("\n".join(sorted(slugs)).encode()).hexdigest()
+
+
+def _days_until(date_str: str):
+    """Whole days from today (local) to an ISO date, or None. Negative = overdue."""
+    try:
+        d = date.fromisoformat(date_str)
+    except (ValueError, TypeError):
+        return None
+    return (d - datetime.now().astimezone().date()).days
 
 
 def _review_key(project: str, text: str) -> str:
@@ -546,6 +556,94 @@ class Api:
             store.save_state(self.state)
         return self._build_view()
 
+    # ---- CTO context: launches + vision (context.json, CTO-owned) -------
+    def _context_view(self, project: str) -> dict:
+        ctx = store.load_context().get(project) or {}
+        active = ctx.get("active_launch")
+        if active:
+            active = {**active, "days_until": _days_until(active.get("target_date", ""))}
+        return {
+            "project": project,
+            "active_launch": active,
+            "past_launches": ctx.get("past_launches", []),
+            "vision": ctx.get("vision", ""),
+        }
+
+    def _mutate_context(self, project: str, fn) -> dict:
+        all_ctx = store.load_context()
+        entry = all_ctx.get(project) or {"active_launch": None, "past_launches": [], "vision": ""}
+        fn(entry)
+        entry["updated_at"] = _now_iso()
+        all_ctx[project] = entry
+        store.save_context(all_ctx)
+        return self._context_view(project)
+
+    def get_context(self, project: str) -> dict:
+        return self._context_view(project)
+
+    def set_active_launch(self, project: str, type: str = "", title: str = "",
+                          action: str = "", target_date: str = "", goals: str = "") -> dict:
+        def fn(entry):
+            if entry.get("active_launch"):
+                return  # one active launch at a time — use update instead
+            entry["active_launch"] = {
+                "id": uuid.uuid4().hex[:12],
+                "type": (type or "").strip()[:60],
+                "title": (title or "").strip()[:160],
+                "action": (action or "").strip()[:60],
+                "target_date": (target_date or "").strip()[:20],
+                "goals": (goals or "").strip()[:2000],
+                "created_at": _now_iso(),
+                "history": [],
+            }
+        return self._mutate_context(project, fn)
+
+    def update_active_launch(self, project: str, type=None, title=None,
+                             action=None, target_date=None, goals=None) -> dict:
+        def fn(entry):
+            a = entry.get("active_launch")
+            if not a:
+                return
+            if type is not None:
+                a["type"] = type.strip()[:60]
+            if title is not None:
+                a["title"] = title.strip()[:160]
+            if action is not None:
+                a["action"] = action.strip()[:60]
+            if target_date is not None:
+                a["target_date"] = target_date.strip()[:20]
+            if goals is not None:
+                a["goals"] = goals.strip()[:2000]
+        return self._mutate_context(project, fn)
+
+    def pushback_launch(self, project: str, new_date: str, reason: str = "") -> dict:
+        def fn(entry):
+            a = entry.get("active_launch")
+            if not a:
+                return
+            a.setdefault("history", []).append({
+                "from": a.get("target_date", ""),
+                "to": (new_date or "").strip()[:20],
+                "reason": (reason or "").strip()[:500],
+                "at": _now_iso(),
+            })
+            a["target_date"] = (new_date or "").strip()[:20]
+        return self._mutate_context(project, fn)
+
+    def complete_launch(self, project: str, status: str = "shipped") -> dict:
+        def fn(entry):
+            a = entry.get("active_launch")
+            if not a:
+                return
+            done = {**a, "status": "cancelled" if status == "cancelled" else "shipped",
+                    "completed_at": _now_iso()}
+            entry.setdefault("past_launches", []).insert(0, done)
+            entry["active_launch"] = None
+        return self._mutate_context(project, fn)
+
+    def save_vision(self, project: str, text: str = "") -> dict:
+        return self._mutate_context(project, lambda e: e.__setitem__("vision", (text or "").strip()[:8000]))
+
     def analyze(self, slug: str) -> dict:
         """Run analysis for one repo's local clone, reusing the cached result
         when the clone's HEAD is unchanged."""
@@ -609,7 +707,9 @@ def _make_handler(api: "Api"):
     web_dir = Path(__file__).resolve().parent / "web"
     ALLOWED = {"get_view", "refresh", "tick", "rescan_local", "analyze",
                "get_analysis", "open_terminal", "dismiss_review",
-               "get_settings", "save_settings"}
+               "get_settings", "save_settings",
+               "get_context", "set_active_launch", "update_active_launch",
+               "pushback_launch", "complete_launch", "save_vision"}
     CONTENT_TYPES = {
         ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
         ".json": "application/json", ".svg": "image/svg+xml",

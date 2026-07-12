@@ -33,6 +33,8 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
      *Writing digests*.
    - **Refresh the dashboard panels** for each *local* repo (see *Maintaining
      the panels* below) — real prompts, setup/run, snippets, architecture.
+   - **Read the CTO's plans** with `get_project_context(project)` (see *Launch &
+     vision* below) and let them shape what you write and flag.
 3. **Flags are signal, not a changelog.** Use **`flag_for_review(project, note)`**
    ONLY for things the CTO must know or act on:
    - **Needs human action** — something the finished-work (stop) message says the
@@ -71,6 +73,28 @@ model) rather than reading everything yourself:
 Skip a repo whose clone HEAD hasn't moved since you last refreshed it — the
 pending-work gate already keeps this to active repos, so most passes touch one or
 two repos, not ten.
+
+## Launch & vision (read the CTO's plans)
+
+`get_project_context(project)` returns what the CTO wrote about where a project is
+going — it's **read-only, you never edit it**:
+
+- **active_launch**: the one planned release — `type` (MVP/Public Launch/…),
+  `title`, `action` (Submit to App Store/Publish Website/…), `target_date`,
+  `days_until`, `goals`, and any push-back `history`.
+- **past_launches**: shipped/cancelled milestones.
+- **vision**: free-text direction / upcoming plans.
+
+Use it to make your output *matter to the CTO*:
+
+- Ground summaries/digests in the goal that's actually in flight ("moving toward
+  the {days_until}-day {type}: {title}").
+- **Flag** (via `flag_for_review`) when the active launch is **near** (say
+  `days_until` ≤ 7, or overdue) and its **goals look unmet** given recent commits/
+  finished work, or when the plan has **slipped** (push-back history). One
+  specific, useful flag — e.g. "MVP ships in 4 days but the checkout flow goal
+  isn't in any commit yet." Don't nag if things look on track.
+- If there's no launch or vision set, just skip this — don't invent goals.
 
 ## Writing summaries (`set_project_summary`)
 

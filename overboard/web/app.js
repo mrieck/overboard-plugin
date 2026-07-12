@@ -28,6 +28,7 @@ async function callView(method, args) {
 let VIEW = null;
 let SELECTED = null;   // selected project name
 let ANALYSES = {};     // slug -> { tab, data, error, loading } for that project's local repos
+let CONTEXT_FOR = null; // project whose right-panel context is currently rendered
 
 function boot() {
   if (window.mermaid) {
@@ -87,6 +88,19 @@ function wireControls() {
   document.getElementById("refresh").addEventListener("click", refresh);
   document.getElementById("rescan").addEventListener("click", rescan);
   document.getElementById("settings").addEventListener("click", openSettings);
+  document.getElementById("context-toggle").addEventListener("click", toggleContext);
+  applyContextCollapsed();
+}
+
+function applyContextCollapsed() {
+  const collapsed = localStorage.getItem("ob-context-collapsed") === "1";
+  document.body.classList.toggle("context-collapsed", collapsed);
+  document.getElementById("context-toggle").textContent = collapsed ? "‹" : "›";
+}
+function toggleContext() {
+  const collapsed = document.body.classList.toggle("context-collapsed");
+  localStorage.setItem("ob-context-collapsed", collapsed ? "1" : "0");
+  document.getElementById("context-toggle").textContent = collapsed ? "‹" : "›";
 }
 
 let _refreshingNow = false;
@@ -134,11 +148,15 @@ function render() {
     // Selection is gone (or nothing selected yet) — reset the right panel.
     SELECTED = null;
     ANALYSES = {};
+    CONTEXT_FOR = null;
     detail.innerHTML = '<div class="detail-empty">Select a project on the left.</div>';
+    document.getElementById("context-body").innerHTML =
+      '<p class="subtle ctx-hint">Select a project to set its launch & vision.</p>';
     return;
   }
   ensureDetailShell();  // keeps any open analysis intact across ticks
   renderReport(proj);
+  if (CONTEXT_FOR !== proj.name) renderContext(proj);  // don't wipe a form on ticks
 }
 
 function renderStatus() {
@@ -287,6 +305,7 @@ function selectProject(name) {
   if (proj) {
     renderReport(proj);
     loadAnalyses(proj); // auto — no button
+    renderContext(proj);
   }
   renderSidebar(); // move the selected highlight
 }
@@ -904,7 +923,232 @@ function dbTab(d) {
   return frag;
 }
 
+// ---- CTO context: launches + vision (right sidebar) ------------------------
+const LAUNCH_TYPES = ["MVP", "Public Launch", "Beta", "Soft Launch", "Milestone", "Feature Release", "Other"];
+const LAUNCH_ACTIONS = [
+  "Submit to App Store", "Submit to Google Play", "Submit to Chrome Web Store",
+  "Publish Website", "Deploy to Production", "Publish npm Package",
+  "Open-Source Release", "Ship Update", "Send to Beta Testers", "Other",
+];
+
+function renderContext(proj) {
+  CONTEXT_FOR = proj.name;
+  const host = document.getElementById("context-body");
+  host.innerHTML = '<p class="subtle">Loading…</p>';
+  call("get_context", { project: proj.name }).then((ctx) => {
+    if (CONTEXT_FOR !== proj.name) return;
+    buildContext(host, proj.name, ctx || {});
+  });
+}
+
+function buildContext(host, project, ctx) {
+  host.textContent = "";
+  host.appendChild(el("h3", "ctx-title", "Launch / milestone"));
+  if (ctx.active_launch) host.appendChild(launchCard(project, ctx));
+  else host.appendChild(launchForm(project, null));
+  if ((ctx.past_launches || []).length) host.appendChild(historyBlock(ctx.past_launches));
+  host.appendChild(el("h3", "ctx-title", "Vision / direction"));
+  host.appendChild(visionBlock(project, ctx.vision || ""));
+}
+
+// A <select> of `options` plus a text input that appears only when "Other" is
+// chosen; get() returns the effective value.
+function selectOther(labelText, options, selected) {
+  const wrap = el("label", "ctx-field", labelText);
+  const sel = document.createElement("select");
+  for (const o of options) {
+    const opt = document.createElement("option");
+    opt.value = o; opt.textContent = o;
+    sel.appendChild(opt);
+  }
+  const custom = document.createElement("input");
+  custom.type = "text"; custom.placeholder = "type it…"; custom.className = "ctx-other";
+  if (selected && options.includes(selected)) sel.value = selected;
+  else if (selected) { sel.value = "Other"; custom.value = selected; }
+  custom.style.display = sel.value === "Other" ? "block" : "none";
+  sel.addEventListener("change", () => {
+    custom.style.display = sel.value === "Other" ? "block" : "none";
+  });
+  wrap.appendChild(sel);
+  wrap.appendChild(custom);
+  return { wrap, get: () => (sel.value === "Other" ? custom.value.trim() : sel.value) };
+}
+
+function launchForm(project, existing) {
+  const box = el("div", "launch-form");
+  const typeF = selectOther("Type", LAUNCH_TYPES, existing ? existing.type : "");
+
+  const titleF = el("label", "ctx-field", "Title");
+  const titleIn = document.createElement("input");
+  titleIn.type = "text"; titleIn.value = existing ? existing.title || "" : "";
+  titleF.appendChild(titleIn);
+
+  const actionF = selectOther("Action", LAUNCH_ACTIONS, existing ? existing.action : "");
+
+  const dateF = el("label", "ctx-field", "Target date");
+  const dateIn = document.createElement("input");
+  dateIn.type = "date"; dateIn.value = existing ? existing.target_date || "" : "";
+  dateF.appendChild(dateIn);
+
+  const goalsF = el("label", "ctx-field", "Goals for launch");
+  const goalsIn = document.createElement("textarea");
+  goalsIn.rows = 3; goalsIn.value = existing ? existing.goals || "" : "";
+  goalsF.appendChild(goalsIn);
+
+  const actions = el("div", "ctx-actions");
+  const status = el("span", "subtle ctx-status", "");
+  const save = el("button", "btn small", existing ? "Save changes" : "Add launch");
+  actions.appendChild(status);
+  if (existing) {
+    const cancel = el("button", "btn ghost small", "Cancel");
+    cancel.addEventListener("click", () => renderContext(currentProject()));
+    actions.appendChild(cancel);
+  }
+  actions.appendChild(save);
+
+  save.addEventListener("click", async () => {
+    save.disabled = true; status.textContent = "Saving…";
+    const payload = {
+      project, type: typeF.get(), title: titleIn.value.trim(),
+      action: actionF.get(), target_date: dateIn.value, goals: goalsIn.value.trim(),
+    };
+    const ctx = await call(existing ? "update_active_launch" : "set_active_launch", payload);
+    if (CONTEXT_FOR === project) buildContext(document.getElementById("context-body"), project, ctx || {});
+  });
+
+  box.appendChild(typeF.wrap);
+  box.appendChild(titleF);
+  box.appendChild(actionF.wrap);
+  box.appendChild(dateF);
+  box.appendChild(goalsF);
+  box.appendChild(actions);
+  return box;
+}
+
+function launchCard(project, ctx) {
+  const a = ctx.active_launch;
+  const box = el("div", "launch-card");
+
+  const top = el("div", "launch-top");
+  top.appendChild(el("span", "launch-type", a.type || "launch"));
+  top.appendChild(countdownBadge(a.days_until));
+  box.appendChild(top);
+
+  if (a.title) box.appendChild(el("div", "launch-title", a.title));
+  if (a.action) box.appendChild(el("div", "launch-action subtle", a.action));
+  box.appendChild(el("div", "launch-date subtle", a.target_date || "no date set"));
+  if (a.goals) box.appendChild(el("div", "launch-goals", a.goals));
+
+  if ((a.history || []).length) {
+    const h = el("div", "launch-hist subtle");
+    h.appendChild(el("div", "hist-head", "Push-backs:"));
+    for (const x of a.history) {
+      h.appendChild(el("div", "", `• ${x.from || "?"} → ${x.to || "?"}${x.reason ? " — " + x.reason : ""}`));
+    }
+    box.appendChild(h);
+  }
+
+  const actions = el("div", "ctx-actions");
+  const edit = el("button", "btn ghost small", "Edit");
+  edit.addEventListener("click", () => {
+    const body = document.getElementById("context-body");
+    body.textContent = "";
+    body.appendChild(el("h3", "ctx-title", "Launch / milestone"));
+    body.appendChild(launchForm(project, a));
+    if ((ctx.past_launches || []).length) body.appendChild(historyBlock(ctx.past_launches));
+    body.appendChild(el("h3", "ctx-title", "Vision / direction"));
+    body.appendChild(visionBlock(project, ctx.vision || ""));
+  });
+  const push = el("button", "btn ghost small", "Push back");
+  push.addEventListener("click", () => openPushback(project, a));
+  const ship = el("button", "btn small", "Mark shipped");
+  ship.addEventListener("click", async () => {
+    const c = await call("complete_launch", { project, status: "shipped" });
+    if (CONTEXT_FOR === project) buildContext(document.getElementById("context-body"), project, c || {});
+  });
+  actions.appendChild(edit);
+  actions.appendChild(push);
+  actions.appendChild(ship);
+  box.appendChild(actions);
+  return box;
+}
+
+function openPushback(project, a) {
+  const body = document.getElementById("context-body");
+  const existing = document.getElementById("pushback-form");
+  if (existing) { existing.remove(); return; }
+  const form = el("div", "pushback-form");
+  form.id = "pushback-form";
+  form.appendChild(el("div", "subtle", "Push back to a new date, with a reason:"));
+  const dateIn = document.createElement("input");
+  dateIn.type = "date"; dateIn.value = a.target_date || "";
+  const reason = document.createElement("input");
+  reason.type = "text"; reason.placeholder = "reason for the slip";
+  const go = el("button", "btn small", "Push back");
+  go.addEventListener("click", async () => {
+    if (!dateIn.value) return;
+    const c = await call("pushback_launch", { project, new_date: dateIn.value, reason: reason.value.trim() });
+    if (CONTEXT_FOR === project) buildContext(body, project, c || {});
+  });
+  form.appendChild(dateIn);
+  form.appendChild(reason);
+  form.appendChild(go);
+  const card = body.querySelector(".launch-card");
+  if (card) card.after(form);
+  else body.appendChild(form);
+}
+
+function historyBlock(past) {
+  const wrap = el("details", "launch-history");
+  wrap.appendChild(el("summary", "", `History (${past.length})`));
+  for (const p of past) {
+    const row = el("div", "hist-row");
+    row.appendChild(el("span", "hist-status " + (p.status === "cancelled" ? "cancelled" : "shipped"), p.status || "done"));
+    const label = `${p.type || ""} ${p.title || ""}`.trim() + (p.target_date ? " · " + p.target_date : "");
+    row.appendChild(el("span", "", label));
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+function visionBlock(project, vision) {
+  const box = el("div", "vision-block");
+  const ta = document.createElement("textarea");
+  ta.rows = 7; ta.className = "vision-text"; ta.value = vision;
+  ta.placeholder = "Upcoming plans, direction, priorities…";
+  const actions = el("div", "ctx-actions");
+  const status = el("span", "subtle ctx-status", "");
+  const save = el("button", "btn small", "Save vision");
+  save.addEventListener("click", async () => {
+    save.disabled = true; status.textContent = "Saving…";
+    await call("save_vision", { project, text: ta.value });
+    status.textContent = "saved ✓"; save.disabled = false;
+    setTimeout(() => { status.textContent = ""; }, 1500);
+  });
+  actions.appendChild(status);
+  actions.appendChild(save);
+  box.appendChild(ta);
+  box.appendChild(actions);
+  return box;
+}
+
+function countdownBadge(days) {
+  const b = el("span", "countdown");
+  if (days == null) { b.textContent = "no date"; b.classList.add("muted"); return b; }
+  if (days < 0) { b.textContent = `overdue ${Math.abs(days)}d`; b.classList.add("overdue"); }
+  else if (days === 0) { b.textContent = "today"; b.classList.add("soon"); }
+  else if (days === 1) { b.textContent = "tomorrow"; b.classList.add("soon"); }
+  else { b.textContent = `in ${days} days`; if (days <= 7) b.classList.add("soon"); }
+  return b;
+}
+
 // ---- small helpers ---------------------------------------------------------
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
 function sectionTitle(txt) {
   const h = document.createElement("h3");
   h.className = "section-title";

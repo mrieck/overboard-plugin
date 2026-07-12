@@ -49,13 +49,23 @@ window is used only if `pywebview` happens to be importable). Keep it this way �
 don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
 `python3`, so it's portable across machines with no config.
 
-## No write races (three files under `~/.cache/overboard/`)
+## No write races (files under `~/.cache/overboard/`)
 
 - `state.json` — **dashboard-owned** (commits, analysis, local links, activity).
   The MCP server never writes it.
 - `ai.json` — **assistant-owned** (summaries, digests, architecture). Written only
   via the `set_*`/`record_*` MCP tools; the dashboard reads but never writes it.
+- `context.json` — **CTO-owned** (per-project launch/milestone + vision). Written
+  only by the dashboard's `Api` (get_context/set_active_launch/update_active_launch/
+  pushback_launch/complete_launch/save_vision); the agent **reads** it via the MCP
+  `get_project_context` tool but never writes. One active launch per project;
+  completed ones move to `past_launches`.
 - `events.jsonl` — append-only (hooks + flags/status). Safe by construction.
+- `credentials.json` — sources/tokens (see below).
+
+`store._atomic_write` uses a **unique** temp file (`tempfile.mkstemp`) per write —
+a fixed `.tmp` name raced when the background analyzer and a refresh saved state
+concurrently (the `state.json.tmp` error).
 
 `Api._build_view` overlays `ai.json` onto `state.json` at read time.
 

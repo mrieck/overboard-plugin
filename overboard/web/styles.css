@@ -199,6 +199,93 @@ html, body {
   padding-top: 4px;
 }
 
+/* ---- right context panel (launches + vision) ------------------------------ */
+#context {
+  width: 340px; flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.context-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+}
+.context-head h2 { margin: 0; font-size: 14px; }
+.context-body { overflow-y: auto; flex: 1; padding: 12px 14px; }
+.ctx-hint { padding: 10px 0; }
+
+body.context-collapsed #context { width: 40px; }
+body.context-collapsed #context .context-body,
+body.context-collapsed #context .context-head h2 { display: none; }
+body.context-collapsed #context .context-head { justify-content: center; padding: 10px 6px; }
+
+.ctx-title {
+  font-size: 12px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.05em; margin: 16px 0 8px;
+}
+.ctx-title:first-child { margin-top: 0; }
+
+.ctx-field { display: block; margin: 8px 0; font-size: 12px; color: var(--muted); }
+.ctx-field input, .ctx-field select, .ctx-field textarea, .vision-text {
+  display: block; width: 100%; margin-top: 3px; padding: 6px 8px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); font-size: 12px; font-family: inherit;
+}
+.ctx-other { margin-top: 5px; }
+.ctx-actions {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 8px; margin-top: 10px; flex-wrap: wrap;
+}
+.ctx-status { margin-right: auto; }
+
+.launch-card, .launch-form {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px; background: var(--panel-2);
+}
+.launch-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.launch-type {
+  font-weight: 700; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--accent);
+}
+.launch-title { font-size: 15px; font-weight: 600; margin: 6px 0 2px; }
+.launch-action { font-size: 12px; }
+.launch-date { font-size: 12px; margin-top: 2px; }
+.launch-goals { font-size: 12.5px; margin-top: 8px; white-space: pre-wrap; line-height: 1.5; }
+.launch-hist { margin-top: 8px; font-size: 11px; }
+.launch-hist .hist-head { font-weight: 600; margin-bottom: 2px; }
+
+.countdown {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  background: var(--chip); color: var(--muted); white-space: nowrap;
+}
+.countdown.soon { background: #3a2f16; color: var(--amber); }
+.countdown.overdue { background: #3d1f1c; color: var(--red); }
+
+.pushback-form {
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  padding: 10px 12px; margin-top: 8px; display: flex; flex-direction: column; gap: 6px;
+}
+.pushback-form input {
+  padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); font-size: 12px;
+}
+
+.launch-history { margin: 12px 0; }
+.launch-history summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.hist-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 0;
+  font-size: 12px; border-bottom: 1px solid var(--border);
+}
+.hist-row:last-child { border-bottom: none; }
+.hist-status {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 4px;
+}
+.hist-status.shipped { background: #16321f; color: var(--green); }
+.hist-status.cancelled { background: #3a2c16; color: var(--amber); }
+
+.vision-text { min-height: 96px; resize: vertical; line-height: 1.5; }
+
 .feed { list-style: none; margin: 4px 0; padding: 0; }
 .feed li {
   display: flex; justify-content: space-between; gap: 10px;

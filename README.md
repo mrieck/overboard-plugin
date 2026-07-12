@@ -9,11 +9,14 @@ while that team works. It shows commit activity, architecture and DB-schema
 visualizations (Mermaid), detected LLM prompts, and — live — the key "needs
 review" tidbits from your working Claudes.
 
-The dashboard is a **two-pane** layout: a condensed left sidebar lists every
+The dashboard is a **three-pane** layout: a condensed left sidebar lists every
 project with a GitHub-style 30-day activity grid and any "⚑ N to review" flags;
-click a project and the whole right panel becomes its detail — summary, your
-assistant's report, recent activity from the team, and per-repo architecture /
-prompts / data-shape analysis.
+the center becomes the selected project's detail — summary, your assistant's
+report, recent activity, and per-repo architecture / prompts / data-shape
+analysis; and a collapsible **right sidebar** is where you (the CTO) set the
+project's **launch/milestone** (type, action, target date, goals — with push-back
+history) and **vision/direction**. The `/overboard` assistant reads that context
+to sharpen its reports and flag slipping launches.
 
 **No Anthropic API key.** All the AI (summaries, digests, architecture) is done
 by the `/overboard` assistant itself — on your **Max/Pro subscription**, not the
@@ -123,7 +126,8 @@ The `/overboard` assistant drives everything through the bundled MCP server (key
 
 - **Read:** `get_pending_work()` (the to-do list), `list_projects()`,
   `get_commits(slug, limit)`, `get_repo_analysis(slug)`,
-  `get_project_events(project, limit)`.
+  `get_project_events(project, limit)`,
+  `get_project_context(project)` (the CTO's launch + vision, read-only).
 - **Write:** `set_project_summary(project, text)`,
   `record_digest(project, narrative, review)`,
   `set_architecture(slug, text, mermaid)`, `set_prompts(slug, items)`,
@@ -145,6 +149,7 @@ discovered (both `bitbucket.org` and `github.com` clones under those roots are
 matched). Files under `~/.cache/overboard/`: `credentials.json` (sources/tokens),
 `state.json` (dashboard-owned: commits, analysis, local links, activity),
 `ai.json` (agent-owned: summaries, digests, architecture/prompts/setup/snippets),
+`context.json` (CTO-owned: per-project launch/milestone + vision),
 `events.jsonl` (append-only activity log). Delete any to reset that piece.
 
 ## Debug helpers

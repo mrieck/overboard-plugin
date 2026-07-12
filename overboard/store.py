@@ -2,6 +2,7 @@
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 PKG_DIR = Path(__file__).resolve().parent
@@ -16,6 +17,9 @@ AI_PATH = STATE_DIR / "ai.json"
 # Provider credentials (Bitbucket + GitHub), managed by the dashboard Settings
 # panel. Machine-local and outside the plugin dir so it survives a reinstall.
 CREDENTIALS_PATH = STATE_DIR / "credentials.json"
+# CTO-authored per-project context (launches/milestones + vision). Written by the
+# dashboard, read-only for the agent — a 4th file so nothing races on writes.
+CONTEXT_PATH = STATE_DIR / "context.json"
 
 SCHEMA_VERSION = 3
 
@@ -103,6 +107,20 @@ def load_sources(config: dict | None = None) -> list[dict]:
     if gh.get("enabled") and gh.get("token"):
         sources.append({"provider": "github", "workspace": None, "token": gh["token"]})
     return sources
+
+
+# ---- CTO context (launches + vision) --------------------------------------
+def load_context() -> dict:
+    try:
+        with open(CONTEXT_PATH) as f:
+            ctx = json.load(f)
+        return ctx if isinstance(ctx, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_context(ctx: dict) -> None:
+    _atomic_write(CONTEXT_PATH, ctx)
 
 
 def load_config() -> dict:
@@ -206,7 +224,17 @@ def save_ai(ai: dict) -> None:
 
 def _atomic_write(path: Path, data: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=1)
-    os.replace(tmp, path)
+    # Unique temp name per write so concurrent writers (e.g. the background
+    # analyzer and a refresh both calling save_state) never clobber each other's
+    # temp file — the old fixed ".tmp" name raced and threw on os.replace.
+    fd, tmp = tempfile.mkstemp(dir=str(STATE_DIR), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=1)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

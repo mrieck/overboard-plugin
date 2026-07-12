@@ -19,7 +19,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 # Make the plugin's `overboard` package importable no matter the cwd or how
 # we're launched (this file lives at <root>/overboard/mcp_server.py).
@@ -99,6 +99,25 @@ def get_repo_analysis(slug: str):
     if not path:
         return {"error": f"no local clone for {slug!r} on this machine"}
     return analysis.analyze_repo(path, slug)
+
+
+def _days_until(date_str: str):
+    try:
+        return (date.fromisoformat(date_str) - datetime.now().astimezone().date()).days
+    except (ValueError, TypeError):
+        return None
+
+
+def get_project_context(project: str):
+    ctx = store.load_context().get(project) or {}
+    active = ctx.get("active_launch")
+    if active:
+        active = {**active, "days_until": _days_until(active.get("target_date", ""))}
+    return {
+        "active_launch": active,
+        "past_launches": ctx.get("past_launches", []),
+        "vision": ctx.get("vision", ""),
+    }
 
 
 def get_project_events(project: str, limit: int = 20):
@@ -245,6 +264,7 @@ TOOLS = [
     ("get_commits", "Recent Bitbucket commits for a repo (includes work pushed from other machines). Basis for a commit-status summary.", {"slug": _S, "limit": _I}, ["slug"], get_commits),
     ("get_repo_analysis", "Static analysis of a repo's local clone: prompts, DB-schema shape, file structure, and manifest_digest (turn it into an architecture write-up via set_architecture). No AI is run — that's your job.", {"slug": _S}, ["slug"], get_repo_analysis),
     ("get_project_events", "Recent activity events for a project or repo (Stop/tool/flag/status), most recent last — raw material for a digest.", {"project": _S, "limit": _I}, ["project"], get_project_events),
+    ("get_project_context", "The CTO's plans for a project (READ-ONLY, CTO-owned): active launch/milestone (type, title, action, target_date, days_until, goals, push-back history), past launches, and the vision/direction text. Use it to sharpen summaries and to flag when a launch is near and its goals look unmet, or the plan has slipped.", {"project": _S}, ["project"], get_project_context),
     ("set_project_summary", "Set a project's commit-status summary (1-2 sentences: what was worked on and where it stands). project is a group name from get_pending_work.", {"project": _S, "text": _S}, ["project", "text"], set_project_summary),
     ("record_digest", "Record the live status digest: narrative (one sentence: what the team is doing now) and review (0-4 items the CTO must ACT ON, gotchas in how it works, or assumptions the Claude made — NOT a summary of features built, which the CTO already knows). Call after reading the project's new events.", {"project": _S, "narrative": _S, "review": {"type": "array", "items": _S}}, ["project", "narrative"], record_digest),
     ("set_architecture", "Set a repo's architecture write-up (2-4 sentences) and optionally a Mermaid flowchart string. slug is a repo slug from list_projects.", {"slug": _S, "text": _S, "mermaid": _S}, ["slug", "text"], set_architecture),
