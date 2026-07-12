@@ -10,6 +10,21 @@ async function call(method, args) {
   return res.json();
 }
 
+// A well-formed view always has a projects array. An error object (e.g. a 403
+// from a stale server that predates a new endpoint) must never replace VIEW, or
+// it corrupts the whole UI. Returns the view, or null on error/bad shape.
+function isView(v) { return v && Array.isArray(v.projects); }
+async function callView(method, args) {
+  try {
+    const v = await call(method, args);
+    if (isView(v)) return v;
+    console.warn("Overboard: ignoring bad response from", method, v);
+  } catch (e) {
+    console.warn("Overboard: call failed", method, e);
+  }
+  return null;
+}
+
 let VIEW = null;
 let SELECTED = null;   // selected project name
 let ANALYSES = {};     // slug -> { tab, data, error, loading } for that project's local repos
@@ -53,8 +68,8 @@ async function tick() {
   if (_ticking || _refreshingNow) return;
   _ticking = true;
   try {
-    VIEW = await call("tick");
-    render();
+    const v = await callView("tick");
+    if (v) { VIEW = v; render(); }
   } catch (_) {
     /* ignore transient poll errors */
   } finally {
@@ -63,8 +78,8 @@ async function tick() {
 }
 
 async function loadView() {
-  VIEW = await call("get_view");
-  render();
+  const v = await callView("get_view");
+  if (v) { VIEW = v; render(); }
 }
 
 // ---- top-level controls ----------------------------------------------------
@@ -80,8 +95,8 @@ async function refresh() {
   btn.textContent = "Refreshing…";
   _refreshingNow = true;
   try {
-    VIEW = await call("refresh");
-    render();
+    const v = await callView("refresh");
+    if (v) { VIEW = v; render(); }
     // New commits may have moved a clone's HEAD — re-pull the analyses too.
     const proj = currentProject();
     if (proj) loadAnalyses(proj);
@@ -96,8 +111,8 @@ async function rescan() {
   const btn = document.getElementById("rescan");
   btn.disabled = true;
   try {
-    VIEW = await call("rescan_local");
-    render();
+    const v = await callView("rescan_local");
+    if (v) { VIEW = v; render(); }
   } finally {
     btn.disabled = false;
   }
@@ -335,8 +350,9 @@ function renderReport(proj) {
         ok.title = "Dismiss — I've seen this";
         ok.addEventListener("click", async () => {
           ok.disabled = true;
-          VIEW = await call("dismiss_review", { project: proj.name, text: r });
-          render();
+          const v = await callView("dismiss_review", { project: proj.name, text: r });
+          if (v) { VIEW = v; render(); }
+          else { ok.disabled = false; ok.textContent = "retry"; ok.title = "Couldn't dismiss — restart the dashboard server"; }
         });
         li.appendChild(ok);
         ul.appendChild(li);
