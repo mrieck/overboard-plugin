@@ -36,6 +36,16 @@ def _parse_date(iso: str) -> datetime | None:
         return None
 
 
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _updated_at(repo: dict) -> datetime:
+    """Parsed activity time for cross-provider comparison. Bitbucket and GitHub
+    format timestamps differently (`…+00:00` vs `…Z`), so compare real dates,
+    not raw strings."""
+    return _parse_date(repo.get("updated_on", "")) or _EPOCH
+
+
 def _slug_signature(slugs: list[str]) -> str:
     return hashlib.sha1("\n".join(sorted(slugs)).encode()).hexdigest()
 
@@ -77,9 +87,17 @@ def _gather_active_repos(sources, sessions, cutoff) -> tuple[dict, list[str]]:
         for r in repos:
             slug = r["slug"]
             prev = meta.get(slug)
-            # On a cross-provider slug collision, keep the most recently active.
-            if prev is None or r.get("updated_on", "") > prev.get("updated_on", ""):
+            # Same repo on Bitbucket + GitHub (e.g. a project you moved to GitHub):
+            # keep the most recently active origin, and remember the other so the
+            # UI can show it lives on both.
+            if prev is None:
                 meta[slug] = r
+            elif _updated_at(r) > _updated_at(prev):
+                r.setdefault("also_providers", []).extend(
+                    [prev["provider"], *prev.get("also_providers", [])])
+                meta[slug] = r
+            else:
+                prev.setdefault("also_providers", []).append(r["provider"])
     return meta, errors
 
 
@@ -158,7 +176,8 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
             slug, branch = repo["slug"], repo["branch"]
             provider, workspace = repo["provider"], repo["workspace"]
             old_repo = old_repos.get(slug, {})
-            base = {"provider": provider, "workspace": workspace, "branch": branch}
+            base = {"provider": provider, "workspace": workspace, "branch": branch,
+                    "also_providers": sorted(set(repo.get("also_providers") or []))}
             session = sessions.get(provider)
             if session is None:
                 repos_state[slug] = {**old_repo, **base, "fetch_error": "provider not configured"}
@@ -340,6 +359,7 @@ class Api:
                     "slug": slug,
                     "branch": r.get("branch"),
                     "provider": r.get("provider"),
+                    "also_providers": [x for x in (r.get("also_providers") or []) if x != r.get("provider")],
                     "local_path": links.get(slug),
                     "fetch_error": r.get("fetch_error"),
                     "has_analysis": slug in analyzed,

@@ -591,6 +591,13 @@ function repoBadge(r) {
     tag.title = r.provider;
     b.appendChild(tag);
   }
+  for (const ap of (r.also_providers || [])) {
+    const tag = document.createElement("span");
+    tag.className = "prov prov-" + ap;
+    tag.textContent = ap === "github" ? "gh" : "bb";
+    tag.title = "also on " + ap;
+    b.appendChild(tag);
+  }
 
   const slug = document.createElement("span");
   slug.className = "slug";
