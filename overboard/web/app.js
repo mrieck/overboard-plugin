@@ -11,6 +11,8 @@ async function call(method, args) {
 }
 
 let VIEW = null;
+let SELECTED = null;                                  // selected project name
+let ANALYSIS = { slug: null, tab: "overview", data: null }; // open repo analysis
 
 function boot() {
   if (window.mermaid) {
@@ -41,7 +43,7 @@ async function init() {
   await loadView();
   // First paint shows cached state; then pull fresh data in the background.
   refresh();
-  // Cheap periodic poll for live activity from working Claudes (event-gated
+  // Cheap periodic poll for live activity from the working Claudes (event-gated
   // server-side, so it only spends tokens when something actually finished).
   setInterval(tick, 20000);
 }
@@ -52,7 +54,7 @@ async function tick() {
   _ticking = true;
   try {
     VIEW = await call("tick");
-    render(VIEW);
+    render();
   } catch (_) {
     /* ignore transient poll errors */
   } finally {
@@ -62,17 +64,13 @@ async function tick() {
 
 async function loadView() {
   VIEW = await call("get_view");
-  render(VIEW);
+  render();
 }
 
 // ---- top-level controls ----------------------------------------------------
 function wireControls() {
   document.getElementById("refresh").addEventListener("click", refresh);
   document.getElementById("rescan").addEventListener("click", rescan);
-  document.getElementById("detail-close").addEventListener("click", closeDetail);
-  document.getElementById("overlay").addEventListener("click", (e) => {
-    if (e.target.id === "overlay") closeDetail();
-  });
 }
 
 let _refreshingNow = false;
@@ -83,7 +81,7 @@ async function refresh() {
   _refreshingNow = true;
   try {
     VIEW = await call("refresh");
-    render(VIEW);
+    render();
   } finally {
     _refreshingNow = false;
     btn.disabled = false;
@@ -96,111 +94,254 @@ async function rescan() {
   btn.disabled = true;
   try {
     VIEW = await call("rescan_local");
-    render(VIEW);
+    render();
   } finally {
     btn.disabled = false;
   }
 }
 
-// ---- rendering -------------------------------------------------------------
-function render(view) {
-  renderStatus(view);
-  const host = document.getElementById("cards");
+// ---- top-level render -------------------------------------------------------
+function currentProject() {
+  return (VIEW && VIEW.projects.find((p) => p.name === SELECTED)) || null;
+}
+
+function render() {
+  renderStatus();
+  renderSidebar();
+
+  const detail = document.getElementById("detail");
+  const proj = currentProject();
+  if (!proj) {
+    // Selection is gone (or nothing selected yet) — reset the right panel.
+    SELECTED = null;
+    ANALYSIS = { slug: null, tab: "overview", data: null };
+    detail.innerHTML = '<div class="detail-empty">Select a project on the left.</div>';
+    return;
+  }
+  ensureDetailShell();  // keeps any open analysis intact across ticks
+  renderReport(proj);
+}
+
+function renderStatus() {
+  const el = document.getElementById("status");
+  el.classList.toggle("warn", VIEW.last_refresh_ok === false);
+  const when = VIEW.last_refresh ? fmtTime(VIEW.last_refresh) : "never";
+  el.textContent = VIEW.last_refresh_ok === false
+    ? `stale · offline (${when})`
+    : `updated ${when} · ${VIEW.machine}`;
+  el.title = VIEW.last_error || "";
+}
+
+// ---- sidebar (condensed project list) --------------------------------------
+function renderSidebar() {
+  const host = document.getElementById("project-list");
   host.textContent = "";
-  if (!view.projects.length) {
+  if (!VIEW.projects.length) {
     const p = document.createElement("p");
     p.className = "empty";
-    p.textContent = view.last_refresh_ok === false
+    p.textContent = VIEW.last_refresh_ok === false
       ? "Offline — no cached projects yet."
       : "No active projects in the commit window.";
     host.appendChild(p);
     return;
   }
-  for (const proj of view.projects) host.appendChild(card(proj, view.window_days));
+  for (const proj of VIEW.projects) host.appendChild(projectRow(proj));
 }
 
-function renderStatus(view) {
-  const el = document.getElementById("status");
-  el.classList.toggle("warn", view.last_refresh_ok === false);
-  const when = view.last_refresh ? fmtTime(view.last_refresh) : "never";
-  el.textContent = view.last_refresh_ok === false
-    ? `stale · offline (${when})`
-    : `updated ${when} · ${view.machine}`;
-  el.title = view.last_error || "";
-}
+function projectRow(proj) {
+  const row = document.createElement("div");
+  row.className = "prow" + (proj.name === SELECTED ? " sel" : "");
+  row.addEventListener("click", () => selectProject(proj.name));
 
-function card(proj, windowDays) {
-  const el = document.createElement("div");
-  el.className = "card";
+  const main = document.createElement("div");
+  main.className = "prow-main";
 
-  const top = document.createElement("div");
-  top.className = "card-top";
-  const name = document.createElement("span");
-  name.className = "card-name";
+  const name = document.createElement("div");
+  name.className = "prow-name";
   name.textContent = proj.name;
-  top.appendChild(name);
-  top.appendChild(chip(proj));
-  el.appendChild(top);
+  main.appendChild(name);
 
-  const summary = document.createElement("p");
-  summary.className = "summary";
-  summary.textContent = proj.summary
-    || (VIEW.agent_has_run ? "No summary yet." : "Run /overboard to have Claude write summaries.");
-  el.appendChild(summary);
+  const meta = document.createElement("div");
+  meta.className = "prow-meta";
+  meta.appendChild(chipMini(proj));
+  if (proj.review && proj.review.length) {
+    const rv = document.createElement("span");
+    rv.className = "prow-review";
+    rv.textContent = `⚑ ${proj.review.length}`;
+    rv.title = `${proj.review.length} item${proj.review.length === 1 ? "" : "s"} to review`;
+    meta.appendChild(rv);
+  }
+  main.appendChild(meta);
 
-  const canvas = document.createElement("canvas");
-  canvas.className = "spark";
-  el.appendChild(canvas);
-  requestAnimationFrame(() => sparkline(canvas, proj.daily_counts, windowDays));
+  row.appendChild(main);
+  row.appendChild(activityGrid(proj.daily_counts)); // 30-day GitHub-style grid
+  return row;
+}
 
+function chipMini(proj) {
+  const c = document.createElement("span");
+  c.className = "chip-mini";
+  if (proj.commits_today) {
+    c.classList.add("active");
+    c.textContent = `● ${proj.commits_today} today`;
+  } else if (proj.days_idle === 0) {
+    c.classList.add("active");
+    c.textContent = "● active";
+  } else if (proj.days_idle != null) {
+    c.classList.add("idle");
+    c.textContent = `idle ${proj.days_idle}d`;
+  } else {
+    c.classList.add("idle");
+    c.textContent = "no data";
+  }
+  return c;
+}
+
+// ---- 30-day activity grid (GitHub-style, replaces the commit bars) ---------
+function dayKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const da = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${da}`;
+}
+
+// Most recent `days` days, oldest first, with counts.
+function dailySeries(counts, days) {
+  const out = [];
+  const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const key = dayKey(d);
+    out.push({ key, count: counts[key] || 0 });
+  }
+  return out;
+}
+
+function level(v) {
+  if (!v) return 0;
+  if (v <= 1) return 1;
+  if (v <= 3) return 2;
+  if (v <= 6) return 3;
+  return 4;
+}
+
+// A fixed 30-cell grid (6 columns × 5 rows), oldest → newest. `big` for the
+// larger version in the detail panel header.
+function activityGrid(counts, big) {
+  const wrap = document.createElement("div");
+  wrap.className = "grid" + (big ? " grid-lg" : "");
+  for (const day of dailySeries(counts || {}, 30)) {
+    const cell = document.createElement("span");
+    cell.className = "cell lvl-" + level(day.count);
+    cell.title = `${day.key}: ${day.count} commit${day.count === 1 ? "" : "s"}`;
+    wrap.appendChild(cell);
+  }
+  return wrap;
+}
+
+// ---- right panel: project report -------------------------------------------
+function selectProject(name) {
+  SELECTED = name;
+  ANALYSIS = { slug: null, tab: "overview", data: null };
+  const detail = document.getElementById("detail");
+  detail.innerHTML =
+    '<div class="detail-inner"><div id="detail-report"></div><div id="detail-analysis"></div></div>';
+  const proj = currentProject();
+  if (proj) renderReport(proj);
+  renderSidebar(); // move the selected highlight
+}
+
+// Build the detail scaffold only if it isn't there — so a tick that re-renders
+// the report doesn't blow away an open repo analysis.
+function ensureDetailShell() {
+  if (document.getElementById("detail-report")) return;
+  const detail = document.getElementById("detail");
+  detail.innerHTML =
+    '<div class="detail-inner"><div id="detail-report"></div><div id="detail-analysis"></div></div>';
+}
+
+function renderReport(proj) {
+  const host = document.getElementById("detail-report");
+  host.textContent = "";
+
+  const head = document.createElement("div");
+  head.className = "rep-head";
+  const h = document.createElement("h2");
+  h.textContent = proj.name;
+  head.appendChild(h);
+  head.appendChild(chip(proj));
+  host.appendChild(head);
+
+  // Large 30-day grid + commit total.
+  const total = Object.values(proj.daily_counts || {}).reduce((a, b) => a + b, 0);
+  const gwrap = document.createElement("div");
+  gwrap.className = "rep-grid";
+  gwrap.appendChild(activityGrid(proj.daily_counts, true));
+  const gl = document.createElement("span");
+  gl.className = "subtle";
+  gl.textContent = `${total} commit${total === 1 ? "" : "s"} in the last 30 days`;
+  gwrap.appendChild(gl);
+  host.appendChild(gwrap);
+
+  // Summary.
+  host.appendChild(sectionTitle("Summary"));
+  const sum = document.createElement("p");
+  sum.className = "rep-summary";
+  sum.textContent = proj.summary
+    || (VIEW.agent_has_run ? "No summary yet." : "Run /overboard to have your assistant write summaries.");
+  host.appendChild(sum);
+
+  // Assistant report: narrative + review flags.
+  if (proj.pm_narrative || (proj.review && proj.review.length)) {
+    host.appendChild(sectionTitle("Assistant report"));
+    if (proj.pm_narrative) {
+      const n = document.createElement("p");
+      n.className = "rep-narr";
+      n.textContent = proj.pm_narrative;
+      host.appendChild(n);
+    }
+    if (proj.review && proj.review.length) {
+      const rh = document.createElement("div");
+      rh.className = "rep-review-head";
+      rh.textContent = `⚑ ${proj.review.length} to review`;
+      host.appendChild(rh);
+      const ul = document.createElement("ul");
+      ul.className = "rep-review";
+      for (const r of proj.review) {
+        const li = document.createElement("li");
+        li.textContent = r;
+        ul.appendChild(li);
+      }
+      host.appendChild(ul);
+    }
+  }
+
+  // Recent activity from the working Claudes.
+  if (proj.activity && proj.activity.length) {
+    host.appendChild(sectionTitle("Recent activity"));
+    const ul = document.createElement("ul");
+    ul.className = "feed";
+    for (const e of proj.activity.slice(0, 14)) {
+      const li = document.createElement("li");
+      const l = document.createElement("span");
+      l.textContent = eventLabel(e);
+      const t = document.createElement("span");
+      t.className = "feed-when subtle";
+      t.textContent = ago(e.ts);
+      li.appendChild(l);
+      li.appendChild(t);
+      ul.appendChild(li);
+    }
+    host.appendChild(ul);
+  }
+
+  // Repositories — click a local one to analyze it in-panel.
+  host.appendChild(sectionTitle("Repositories"));
   const repos = document.createElement("div");
   repos.className = "repos";
   for (const r of proj.repos) repos.appendChild(repoBadge(r));
-  el.appendChild(repos);
-
-  const pm = activityBlock(proj);
-  if (pm) el.appendChild(pm);
-
-  return el;
-}
-
-// ---- live activity / project-manager block ---------------------------------
-function activityBlock(proj) {
-  const hasReview = proj.review && proj.review.length;
-  const hasFeed = proj.activity && proj.activity.length;
-  if (!hasReview && !hasFeed && !proj.pm_narrative) return null;
-
-  const box = document.createElement("div");
-  box.className = "pm";
-
-  if (proj.pm_narrative) {
-    const n = document.createElement("div");
-    n.className = "pm-narr";
-    n.textContent = proj.pm_narrative;
-    box.appendChild(n);
-  }
-  if (hasReview) {
-    const head = document.createElement("div");
-    head.className = "pm-review-head";
-    head.textContent = `⚑ ${proj.review.length} to review`;
-    box.appendChild(head);
-    const ul = document.createElement("ul");
-    ul.className = "pm-review";
-    for (const r of proj.review) {
-      const li = document.createElement("li");
-      li.textContent = r;
-      ul.appendChild(li);
-    }
-    box.appendChild(ul);
-  }
-  if (hasFeed) {
-    const foot = document.createElement("div");
-    foot.className = "pm-foot subtle";
-    const e = proj.activity[0];
-    foot.textContent = `latest: ${eventLabel(e)} · ${ago(e.ts)}`;
-    box.appendChild(foot);
-  }
-  return box;
+  host.appendChild(repos);
 }
 
 function eventLabel(e) {
@@ -266,12 +407,12 @@ function repoBadge(r) {
     loc.className = "loc link";
     loc.textContent = "local";
     loc.title = "Open " + r.local_path;
-    loc.addEventListener("click", () => call("open_local", { path: r.local_path }));
+    loc.addEventListener("click", (e) => { e.stopPropagation(); call("open_local", { path: r.local_path }); });
     b.appendChild(loc);
 
     const analyze = document.createElement("button");
     analyze.textContent = r.has_analysis ? "details" : "analyze";
-    analyze.addEventListener("click", () => openDetail(r.slug));
+    analyze.addEventListener("click", () => openRepoAnalysis(r.slug));
     b.appendChild(analyze);
   } else {
     const loc = document.createElement("span");
@@ -282,106 +423,78 @@ function repoBadge(r) {
   return b;
 }
 
-// ---- commit sparkline (hand-drawn, no chart lib) ---------------------------
-function dayKey(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const da = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${da}`;
-}
-
-function seriesFor(counts, days) {
-  const out = [];
-  const today = new Date();
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    out.push(counts[dayKey(d)] || 0);
-  }
-  return out;
-}
-
-function sparkline(canvas, counts, days) {
-  const series = seriesFor(counts, days || 30);
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth || 480;
-  const h = canvas.clientHeight || 40;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, w, h);
-
-  const max = Math.max(1, ...series);
-  const n = series.length;
-  const gap = 1;
-  const bw = (w - gap * (n - 1)) / n;
-  for (let i = 0; i < n; i++) {
-    const v = series[i];
-    const bh = v === 0 ? 1 : Math.max(2, (v / max) * (h - 2));
-    const x = i * (bw + gap);
-    const y = h - bh;
-    // Most recent day highlighted; empty days faint.
-    ctx.fillStyle = i === n - 1 ? "#4da3ff" : (v === 0 ? "#2c313b" : "#3ecf7b");
-    ctx.fillRect(x, y, bw, bh);
-  }
-}
-
-// ---- detail overlay --------------------------------------------------------
-let DETAIL = { slug: null, tab: "overview", data: null };
-
-async function openDetail(slug) {
-  DETAIL = { slug, tab: "overview", data: null };
-  document.getElementById("detail-title").textContent = slug;
-  document.getElementById("overlay").classList.remove("hidden");
-  document.getElementById("tabs").textContent = "";
-  document.getElementById("tab-body").innerHTML =
-    '<div class="spinner">Analyzing local clone…</div>';
-  const data = await call("analyze", { slug });
-  DETAIL.data = data;
-  if (data && data.error) {
-    document.getElementById("tab-body").innerHTML =
-      `<div class="spinner">${escapeHtml(data.error)}</div>`;
-    return;
-  }
-  renderTabs();
-}
-
-function closeDetail() {
-  document.getElementById("overlay").classList.add("hidden");
-}
-
-const TABS = [
+// ---- repo analysis (rendered in-panel, below the report) -------------------
+const AN_TABS = [
   ["overview", "Overview"],
   ["prompts", "Prompts"],
   ["db", "Data shape"],
-  ["commits", "Commits"],
 ];
 
-function renderTabs() {
-  const nav = document.getElementById("tabs");
-  nav.textContent = "";
-  for (const [key, label] of TABS) {
-    const b = document.createElement("button");
-    let n = "";
-    if (key === "prompts") n = ` (${DETAIL.data.prompts.length})`;
-    if (key === "db") n = ` (${DETAIL.data.db.length})`;
-    b.textContent = label + n;
-    b.className = DETAIL.tab === key ? "on" : "";
-    b.addEventListener("click", () => { DETAIL.tab = key; renderTabs(); });
-    nav.appendChild(b);
+async function openRepoAnalysis(slug) {
+  ANALYSIS = { slug, tab: "overview", data: null };
+  const host = document.getElementById("detail-analysis");
+  host.innerHTML =
+    `<div class="analysis"><div class="an-head"><h3>${escapeHtml(slug)}</h3></div>` +
+    `<div class="spinner">Analyzing local clone…</div></div>`;
+  const data = await call("analyze", { slug });
+  if (ANALYSIS.slug !== slug) return; // user switched away while we waited
+  ANALYSIS.data = data;
+  if (data && data.error) {
+    host.querySelector(".analysis").innerHTML =
+      `<div class="an-head"><h3>${escapeHtml(slug)}</h3></div>` +
+      `<div class="spinner">${escapeHtml(data.error)}</div>`;
+    return;
   }
-  renderTabBody();
+  renderAnalysis();
+  host.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function renderTabBody() {
-  const body = document.getElementById("tab-body");
-  const d = DETAIL.data;
-  body.textContent = "";
-  if (DETAIL.tab === "overview") body.appendChild(overviewTab(d));
-  else if (DETAIL.tab === "prompts") body.appendChild(promptsTab(d));
-  else if (DETAIL.tab === "db") body.appendChild(dbTab(d));
-  else if (DETAIL.tab === "commits") body.appendChild(commitsTab());
+function renderAnalysis() {
+  const host = document.getElementById("detail-analysis");
+  const d = ANALYSIS.data;
+  if (!d) return;
+
+  const box = document.createElement("div");
+  box.className = "analysis";
+
+  const head = document.createElement("div");
+  head.className = "an-head";
+  const h = document.createElement("h3");
+  h.textContent = ANALYSIS.slug;
+  head.appendChild(h);
+  const close = document.createElement("button");
+  close.className = "btn ghost small";
+  close.textContent = "Close";
+  close.addEventListener("click", () => {
+    ANALYSIS = { slug: null, tab: "overview", data: null };
+    host.textContent = "";
+  });
+  head.appendChild(close);
+  box.appendChild(head);
+
+  const nav = document.createElement("nav");
+  nav.className = "tabs";
+  for (const [key, label] of AN_TABS) {
+    const b = document.createElement("button");
+    let n = "";
+    if (key === "prompts") n = ` (${d.prompts.length})`;
+    if (key === "db") n = ` (${d.db.length})`;
+    b.textContent = label + n;
+    b.className = ANALYSIS.tab === key ? "on" : "";
+    b.addEventListener("click", () => { ANALYSIS.tab = key; renderAnalysis(); });
+    nav.appendChild(b);
+  }
+  box.appendChild(nav);
+
+  const body = document.createElement("div");
+  body.className = "tab-body";
+  if (ANALYSIS.tab === "overview") body.appendChild(overviewTab(d));
+  else if (ANALYSIS.tab === "prompts") body.appendChild(promptsTab(d));
+  else if (ANALYSIS.tab === "db") body.appendChild(dbTab(d));
+  box.appendChild(body);
+
+  host.textContent = "";
+  host.appendChild(box);
 }
 
 function overviewTab(d) {
@@ -389,7 +502,7 @@ function overviewTab(d) {
   const arch = document.createElement("p");
   arch.className = "arch";
   arch.textContent = d.architecture
-    || (VIEW.agent_has_run ? "No architecture write-up yet." : "Run /overboard to have Claude describe the architecture.");
+    || (VIEW.agent_has_run ? "No architecture write-up yet." : "Run /overboard to have your assistant describe the architecture.");
   frag.appendChild(arch);
 
   const archDiagram = d.diagrams && d.diagrams.architecture;
@@ -482,24 +595,10 @@ function dbTab(d) {
   return frag;
 }
 
-function commitsTab() {
-  const proj = VIEW.projects.find((p) => p.repos.some((r) => r.slug === DETAIL.slug));
-  const frag = document.createElement("div");
-  if (!proj) { frag.appendChild(note("No commit data.")); return frag; }
-  const total = Object.values(proj.daily_counts).reduce((a, b) => a + b, 0);
-  frag.appendChild(sectionTitle(`${total} commits in the last ${VIEW.window_days} days`));
-  const canvas = document.createElement("canvas");
-  canvas.className = "spark";
-  canvas.style.height = "80px";
-  frag.appendChild(canvas);
-  requestAnimationFrame(() => sparkline(canvas, proj.daily_counts, VIEW.window_days));
-  return frag;
-}
-
 // ---- small helpers ---------------------------------------------------------
 function sectionTitle(txt) {
   const h = document.createElement("h3");
-  h.style.cssText = "font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin:14px 0 6px;";
+  h.className = "section-title";
   h.textContent = txt;
   return h;
 }

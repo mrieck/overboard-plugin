@@ -2,8 +2,8 @@
   "name": "overboard",
   "displayName": "Overboard",
   "version": "0.1.0",
-  "description": "Project-manager dashboard — presents what matters across all your projects while other Claudes work. Hooks observe Stop/tool events; a dashboard visualizes architecture, DB shape, commit activity, and review tidbits.",
+  "description": "The CTO's assistant — presents what matters across all your projects while the engineering team of Claudes works. Hooks observe Stop/tool events; a dashboard visualizes architecture, DB shape, commit activity, and review tidbits.",
   "author": { "name": "Mark Rieck" },
-  "keywords": ["dashboard", "project-management", "visualization", "hooks", "bitbucket"],
+  "keywords": ["dashboard", "cto", "project-management", "visualization", "hooks", "bitbucket"],
   "license": "MIT"
 }

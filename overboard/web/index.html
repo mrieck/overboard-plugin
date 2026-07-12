@@ -7,31 +7,27 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header id="topbar">
-    <div class="title">
-      <span class="dot"></span>
-      <h1>Overboard</h1>
-    </div>
-    <div class="actions">
-      <span id="status" class="status"></span>
-      <button id="rescan" class="btn ghost" title="Re-scan local clones">Rescan</button>
-      <button id="refresh" class="btn">Refresh</button>
-    </div>
-  </header>
-
-  <main id="cards" class="cards">
-    <p class="empty">Loading…</p>
-  </main>
-
-  <div id="overlay" class="overlay hidden">
-    <div class="panel">
-      <div class="panel-head">
-        <h2 id="detail-title">—</h2>
-        <button id="detail-close" class="btn ghost">Close</button>
+  <div class="layout">
+    <aside id="sidebar">
+      <header id="sidebar-head">
+        <div class="title">
+          <span class="dot"></span>
+          <h1>Overboard</h1>
+        </div>
+        <div class="actions">
+          <button id="rescan" class="btn ghost small" title="Re-scan local clones">Rescan</button>
+          <button id="refresh" class="btn small">Refresh</button>
+        </div>
+      </header>
+      <div id="status" class="status"></div>
+      <div id="project-list" class="project-list">
+        <p class="empty">Loading…</p>
       </div>
-      <nav id="tabs" class="tabs"></nav>
-      <div id="tab-body" class="tab-body"></div>
-    </div>
+    </aside>
+
+    <main id="detail" class="detail">
+      <div class="detail-empty">Select a project on the left.</div>
+    </main>
   </div>
 
   <script src="vendor/mermaid.min.js"></script>

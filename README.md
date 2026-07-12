@@ -2,14 +2,21 @@
 
 *Shipping too much? You need to go Overboard.*
 
-Overboard is a Claude Code plugin whose dashboard lets your Claude act as a
-**project manager** — presenting what matters across all your projects while
-other Claude Code sessions are working. It shows commit activity, architecture
-and DB-schema visualizations (Mermaid), detected LLM prompts, and — live — the
-key "needs review" tidbits from your working Claudes.
+Overboard is a Claude Code plugin whose dashboard lets your Claude act as the
+**CTO's assistant** — you're the CTO, the other Claude Code sessions are your
+engineering team, and Overboard presents what matters across all your projects
+while that team works. It shows commit activity, architecture and DB-schema
+visualizations (Mermaid), detected LLM prompts, and — live — the key "needs
+review" tidbits from your working Claudes.
+
+The dashboard is a **two-pane** layout: a condensed left sidebar lists every
+project with a GitHub-style 30-day activity grid and any "⚑ N to review" flags;
+click a project and the whole right panel becomes its detail — summary, your
+assistant's report, recent activity from the team, and per-repo architecture /
+prompts / data-shape analysis.
 
 **No Anthropic API key.** All the AI (summaries, digests, architecture) is done
-by the `/overboard` agent itself — on your **Max/Pro subscription**, not the
+by the `/overboard` assistant itself — on your **Max/Pro subscription**, not the
 metered API. You run `/overboard`, Claude launches the dashboard, does the
 analysis, and puts *itself* on a loop; you leave the terminal open. The dashboard
 is a pure viewer.
@@ -22,8 +29,8 @@ handles the paths, so it's portable across machines with zero config.
 It has two parts in one repo:
 
 1. **The plugin** Claude Code loads — hooks that observe your sessions, an MCP
-   server the agent reads inputs from and writes results to, the `/overboard`
-   command, and the `project-manager` skill.
+   server the assistant reads inputs from and writes results to, the `/overboard`
+   command, and the `cto-assistant` skill.
 2. **The dashboard** — a tiny stdlib `http.server` you view in a browser (or a
    native window if you happen to have `pywebview` installed). Key-free.
 
@@ -35,21 +42,21 @@ It has two parts in one repo:
  Working Claude C ─┘                                  │
  Bitbucket commits ──▶ perform_refresh ──▶ state.json ┤  (deterministic, key-free)
                                                       ▼
-      /overboard agent (Max sub) ── reads via MCP ──▶ thinks ──▶ writes ai.json
+  /overboard assistant (Max sub) ── reads via MCP ──▶ thinks ──▶ writes ai.json
                                                       ▼
                          dashboard = pure viewer: overlays ai.json on state.json →
                            summaries + activity feed + "needs review" +
                            Mermaid architecture / ER / commit sparklines
 ```
 
-The agent is **event-gated**: `get_pending_work` only returns projects that
+The assistant is **event-gated**: `get_pending_work` only returns projects that
 changed (new finished work, or new commits), so idle projects cost nothing — not
 even a Max-sub turn. Bitbucket commits are the cross-machine baseline, so work you
 did on other machines and pushed still shows up.
 
-**Three files, no write races:** the dashboard owns `state.json`; the agent owns
-`ai.json`; `events.jsonl` is append-only. The dashboard reads `ai.json` but never
-writes it, and the agent's MCP server never writes `state.json`.
+**Three files, no write races:** the dashboard owns `state.json`; the assistant
+owns `ai.json`; `events.jsonl` is append-only. The dashboard reads `ai.json` but
+never writes it, and the assistant's MCP server never writes `state.json`.
 
 ## Setup (once)
 
@@ -92,14 +99,14 @@ python3 -m overboard.app --once   # headless refresh, print, exit
 
 It serves a browser dashboard at `http://localhost:8787`. Deterministic content
 (commit activity, sparklines, local badges, static prompt/DB analysis, Mermaid ER
-+ structure) always shows. AI content (summaries, PM digests, architecture
++ structure) always shows. AI content (summaries, status digests, architecture
 write-ups) fills in once `/overboard` has run. **Refresh** re-pulls commits;
 **Rescan** re-discovers local clones; click a repo's **analyze** for prompts /
 DB-shape / architecture.
 
-## MCP tools (the agent's hands)
+## MCP tools (the assistant's hands)
 
-The `/overboard` agent drives everything through the bundled MCP server (key-free
+The `/overboard` assistant drives everything through the bundled MCP server (key-free
 — the tools just read deterministic data and persist JSON):
 
 - **Read:** `get_pending_work()` (the to-do list), `list_projects()`,
@@ -111,7 +118,7 @@ The `/overboard` agent drives everything through the bundled MCP server (key-fre
   `record_status(project, note)`.
 - **Dashboard:** `launch_dashboard()` — start the dashboard server, return its URL.
 
-The `project-manager` skill is the agent's full playbook (routine + writing
+The `cto-assistant` skill is the assistant's full playbook (routine + writing
 style + the event-gated loop rule). Any working Claude can also call
 `flag_for_review` to raise something ad hoc.
 
