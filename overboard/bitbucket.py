@@ -7,20 +7,17 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
+from overboard.errors import AuthError, ProviderError  # AuthError re-exported
+
 API_BASE = "https://api.bitbucket.org/2.0"
 FIELDS = "values.hash,values.date,values.message,values.author.raw"
 _TIMEOUT = 20
 
 
-class BitbucketError(Exception):
+class BitbucketError(ProviderError):
     def __init__(self, slug: str, reason: str):
         self.slug = slug
-        self.reason = reason
-        super().__init__(f"{slug}: {reason}")
-
-
-class AuthError(BitbucketError):
-    pass
+        super().__init__(slug, reason)
 
 
 class _Session:

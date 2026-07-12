@@ -86,6 +86,7 @@ async function loadView() {
 function wireControls() {
   document.getElementById("refresh").addEventListener("click", refresh);
   document.getElementById("rescan").addEventListener("click", rescan);
+  document.getElementById("settings").addEventListener("click", openSettings);
 }
 
 let _refreshingNow = false;
@@ -154,6 +155,20 @@ function renderStatus() {
 function renderSidebar() {
   const host = document.getElementById("project-list");
   host.textContent = "";
+  if (!VIEW.has_sources) {
+    const wrap = document.createElement("div");
+    wrap.className = "empty";
+    const p = document.createElement("p");
+    p.textContent = "No sources yet — add a Bitbucket or GitHub token to get started.";
+    const b = document.createElement("button");
+    b.className = "btn small";
+    b.textContent = "Open Settings ⚙";
+    b.addEventListener("click", openSettings);
+    wrap.appendChild(p);
+    wrap.appendChild(b);
+    host.appendChild(wrap);
+    return;
+  }
   if (!VIEW.projects.length) {
     const p = document.createElement("p");
     p.className = "empty";
@@ -452,6 +467,92 @@ function _escClose(e) {
   if (e.key === "Escape") closeActivityModal();
 }
 
+// ---- settings (sources & tokens) -------------------------------------------
+async function openSettings() {
+  const s = await call("get_settings");
+  if (!s || !s.bitbucket) return;
+  renderSettingsModal(s);
+}
+
+function renderSettingsModal(s) {
+  closeSettings();
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay";
+  ov.id = "settings-modal";
+  ov.addEventListener("click", (e) => { if (e.target === ov) closeSettings(); });
+
+  const box = document.createElement("div");
+  box.className = "modal";
+  box.innerHTML =
+    '<div class="modal-head"><h3>Settings — sources</h3>' +
+    '<button class="btn ghost small" data-close>Close</button></div>' +
+    '<div class="settings-body">' +
+      '<fieldset class="src">' +
+        '<legend><label><input type="checkbox" id="bb-enabled"> Bitbucket</label></legend>' +
+        '<label>Workspace <input type="text" id="bb-workspace" placeholder="e.g. mrieck81"></label>' +
+        '<label>Email <input type="text" id="bb-email" placeholder="you@example.com"></label>' +
+        '<label>API token <input type="password" id="bb-token"></label>' +
+      '</fieldset>' +
+      '<fieldset class="src">' +
+        '<legend><label><input type="checkbox" id="gh-enabled"> GitHub</label></legend>' +
+        '<label>Personal access token <input type="password" id="gh-token"></label>' +
+        '<p class="subtle hint">Classic PAT with <code>repo</code> scope (or fine-grained: repository contents + metadata, read). Pulls the repos you own.</p>' +
+      '</fieldset>' +
+      '<div class="settings-actions"><span id="settings-status" class="subtle"></span>' +
+      '<button class="btn" data-save>Save &amp; refresh</button></div>' +
+    '</div>';
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+
+  box.querySelector("#bb-enabled").checked = s.bitbucket.enabled;
+  box.querySelector("#bb-workspace").value = s.bitbucket.workspace || "";
+  box.querySelector("#bb-email").value = s.bitbucket.email || "";
+  box.querySelector("#bb-token").placeholder = s.bitbucket.token_set ? "•••• saved — blank keeps it" : "paste token";
+  box.querySelector("#gh-enabled").checked = s.github.enabled;
+  box.querySelector("#gh-token").placeholder = s.github.token_set ? "•••• saved — blank keeps it" : "paste token";
+
+  box.querySelector("[data-close]").addEventListener("click", closeSettings);
+  box.querySelector("[data-save]").addEventListener("click", () => saveSettings(box));
+  document.addEventListener("keydown", _settingsEsc);
+}
+
+function _settingsEsc(e) { if (e.key === "Escape") closeSettings(); }
+function closeSettings() {
+  const m = document.getElementById("settings-modal");
+  if (m) m.remove();
+  document.removeEventListener("keydown", _settingsEsc);
+}
+
+async function saveSettings(box) {
+  const status = box.querySelector("#settings-status");
+  const saveBtn = box.querySelector("[data-save]");
+  saveBtn.disabled = true;
+  status.textContent = "Saving & refreshing…";
+  const payload = {
+    bitbucket: {
+      enabled: box.querySelector("#bb-enabled").checked,
+      workspace: box.querySelector("#bb-workspace").value.trim(),
+      email: box.querySelector("#bb-email").value.trim(),
+      token: box.querySelector("#bb-token").value,
+    },
+    github: {
+      enabled: box.querySelector("#gh-enabled").checked,
+      token: box.querySelector("#gh-token").value,
+    },
+  };
+  const v = await callView("save_settings", payload);
+  if (v) {
+    VIEW = v;
+    closeSettings();
+    render();
+    const proj = currentProject();
+    if (proj) loadAnalyses(proj);
+  } else {
+    status.textContent = "Save failed — restart the dashboard server and retry.";
+    saveBtn.disabled = false;
+  }
+}
+
 function ago(ts) {
   if (!ts) return "";
   const s = Math.max(0, Date.now() / 1000 - ts);
@@ -482,6 +583,14 @@ function chip(proj) {
 function repoBadge(r) {
   const b = document.createElement("span");
   b.className = "badge" + (r.local_path ? " local" : "") + (r.fetch_error ? " err" : "");
+
+  if (r.provider) {
+    const tag = document.createElement("span");
+    tag.className = "prov prov-" + r.provider;
+    tag.textContent = r.provider === "github" ? "gh" : "bb";
+    tag.title = r.provider;
+    b.appendChild(tag);
+  }
 
   const slug = document.createElement("span");
   slug.className = "slug";

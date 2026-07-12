@@ -13,6 +13,9 @@ STATE_PATH = STATE_DIR / "state.json"
 # state.json so the agent's MCP server and the dashboard never write the same
 # file — the dashboard reads this and never writes it; the agent writes only it.
 AI_PATH = STATE_DIR / "ai.json"
+# Provider credentials (Bitbucket + GitHub), managed by the dashboard Settings
+# panel. Machine-local and outside the plugin dir so it survives a reinstall.
+CREDENTIALS_PATH = STATE_DIR / "credentials.json"
 
 SCHEMA_VERSION = 3
 
@@ -50,6 +53,58 @@ def load_env() -> dict:
     return env
 
 
+# ---- provider credentials + sources ---------------------------------------
+def load_credentials() -> dict:
+    try:
+        with open(CREDENTIALS_PATH) as f:
+            cred = json.load(f)
+        return cred if isinstance(cred, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_credentials(cred: dict) -> None:
+    _atomic_write(CREDENTIALS_PATH, cred)
+    try:
+        os.chmod(CREDENTIALS_PATH, 0o600)  # tokens live here — keep it private
+    except OSError:
+        pass
+
+
+def load_sources(config: dict | None = None) -> list[dict]:
+    """Enabled, credential-complete sources for the refresh loop:
+      [{"provider":"bitbucket","workspace":...,"email":...,"token":...},
+       {"provider":"github","workspace":None,"token":...}]
+    Never raises — a missing/incomplete source is simply omitted, so the
+    dashboard can boot with no credentials and onboard via the Settings panel."""
+    cred = load_credentials()
+    bb = dict(cred.get("bitbucket") or {})
+
+    # Legacy migration: no credentials file yet, but the old .env + projects.json
+    # workspace exist — synthesize a Bitbucket source so existing installs keep
+    # working untouched.
+    if not cred:
+        env = _parse_env(ENV_PATH)
+        if env.get("ATLASSIAN_EMAIL") and env.get("BITBUCKET_API_TOKEN"):
+            ws = (config or {}).get("workspace")
+            if ws is None:
+                try:
+                    ws = load_config().get("workspace")
+                except ConfigError:
+                    ws = None
+            bb = {"enabled": True, "workspace": ws,
+                  "email": env["ATLASSIAN_EMAIL"], "token": env["BITBUCKET_API_TOKEN"]}
+
+    sources: list[dict] = []
+    if bb.get("enabled") and bb.get("workspace") and bb.get("email") and bb.get("token"):
+        sources.append({"provider": "bitbucket", "workspace": bb["workspace"],
+                        "email": bb["email"], "token": bb["token"]})
+    gh = dict(cred.get("github") or {})
+    if gh.get("enabled") and gh.get("token"):
+        sources.append({"provider": "github", "workspace": None, "token": gh["token"]})
+    return sources
+
+
 def load_config() -> dict:
     try:
         with open(CONFIG_PATH) as f:
@@ -59,8 +114,8 @@ def load_config() -> dict:
     except json.JSONDecodeError as e:
         raise ConfigError(f"{CONFIG_PATH} is not valid JSON: {e}")
 
-    if not config.get("workspace"):
-        raise ConfigError(f"{CONFIG_PATH}: 'workspace' is required")
+    # 'workspace' is no longer required here — it moved into the per-provider
+    # credentials (Settings panel). It's still read as a legacy fallback.
     # Projects are auto-discovered from the workspace by recent activity, so
     # 'projects' is optional. If present it's validated as a manual override.
     projects = config.get("projects")

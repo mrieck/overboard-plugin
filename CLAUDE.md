@@ -97,8 +97,39 @@ step, `fetch('/api/<method>')` to the Python `Api`. Mermaid is vendored offline.
 There are **no commit bar charts** — the day grid replaced them; don't bring bars
 back.
 
-## Setup
+## Sources (Bitbucket + GitHub, merged)
 
-Only credentials: a Bitbucket read token in `.env` at the repo root
-(`ATLASSIAN_EMAIL`, `BITBUCKET_API_TOKEN`). No `ANTHROPIC_API_KEY`. `.env` is
-gitignored.
+Overboard reads repos from **multiple providers at once**. The provider layer is
+isolated so adding a provider is mechanical:
+
+- `overboard/errors.py` — shared `ProviderError` / `AuthError` (no imports).
+- `overboard/bitbucket.py`, `overboard/github.py` — stdlib `urllib` clients with
+  the *same* interface (`make_session`, `list_active_repos(session, cutoff)`,
+  `fetch_recent_commits`). GitHub auth is just a PAT; it paginates via the `Link`
+  header. Their errors subclass the shared bases.
+- `overboard/providers.py` — dispatch facade: `make_session(source)`,
+  `active_repos(source, session, cutoff)`, `commits(repo, session)`. Returns
+  **normalized** dicts; each repo carries `provider` + `workspace`.
+- `perform_refresh(config, sources, old_state)` merges repos from every source
+  (`_gather_active_repos`), dedupes by slug (keep most recent), and fetches
+  commits per-repo via its provider. **Auth is per-source** — one bad token never
+  blanks the other provider.
+- Repo state records store `provider`/`workspace`; the view exposes `provider`
+  (shown as a `bb`/`gh` tag). `mcp_server.get_commits` dispatches by provider.
+- `localrepo` matches clones by **host** (`PROVIDER_HOSTS`) so github.com and
+  bitbucket.org clones under `local_roots` are both found.
+
+**To add another provider:** new client module (same interface) → add it to
+`providers.py` dispatch + `PROVIDER_HOSTS` → add a source shape to
+`store.load_sources` + the Settings panel.
+
+## Credentials & setup
+
+Tokens live in `~/.cache/overboard/credentials.json` (mode 0600, machine-local),
+managed by the dashboard **⚙ Settings** panel (`Api.get_settings`/`save_settings`
+— tokens are masked on read, blank-on-save keeps the existing one).
+`store.load_sources()` returns enabled+complete sources and **never raises**, so
+the dashboard **boots with no credentials** (`app.main` no longer exits; the
+sidebar shows onboarding when `has_sources` is false). A legacy repo-root `.env`
+(`ATLASSIAN_EMAIL`/`BITBUCKET_API_TOKEN`) is auto-migrated into the credentials
+file. No `ANTHROPIC_API_KEY`.

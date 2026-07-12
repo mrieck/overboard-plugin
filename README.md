@@ -60,8 +60,20 @@ never writes it, and the assistant's MCP server never writes `state.json`.
 
 ## Setup (once)
 
-Just credentials — there's nothing to install. Put a Bitbucket read token in a
-`.env` at the repo root:
+Just credentials — there's nothing to install. Open the dashboard and click the
+**⚙ Settings** button; it boots even with no credentials. Add either or both
+sources (you can run them together — one merged board):
+
+- **Bitbucket** — workspace + Atlassian email + an API token.
+- **GitHub** — a personal access token (classic with `repo` scope, or
+  fine-grained with repository **contents + metadata, read**). Pulls the repos
+  you own.
+
+Saved to `~/.cache/overboard/credentials.json` (mode `0600`, machine-local, so it
+survives a plugin reinstall). Tokens are never sent back to the browser.
+
+A legacy `.env` at the repo root still works as a Bitbucket fallback and is
+migrated into the credentials file on first save:
 
 ```
 ATLASSIAN_EMAIL=you@example.com
@@ -125,18 +137,22 @@ style + the event-gated loop rule). Any working Claude can also call
 
 ## Configuration
 
-Edit `overboard/projects.json` — `workspace`, `refresh_interval_minutes`,
-`commit_window_days`, and optional `local_roots` (default `["~/Sites"]`) for
-where local clones are discovered. Files under `~/.cache/overboard/`:
+Sources & tokens live in the **⚙ Settings** panel (→
+`~/.cache/overboard/credentials.json`). Non-secret app config is in
+`overboard/projects.json` — `refresh_interval_minutes`, `commit_window_days`, and
+optional `local_roots` (default `["~/Sites"]`) for where local clones are
+discovered (both `bitbucket.org` and `github.com` clones under those roots are
+matched). Files under `~/.cache/overboard/`: `credentials.json` (sources/tokens),
 `state.json` (dashboard-owned: commits, analysis, local links, activity),
-`ai.json` (agent-owned: summaries, digests, architecture), `events.jsonl`
-(append-only activity log). Delete any to reset that piece.
+`ai.json` (agent-owned: summaries, digests, architecture/prompts/setup/snippets),
+`events.jsonl` (append-only activity log). Delete any to reset that piece.
 
 ## Debug helpers
 
 ```sh
-python3 -m overboard.localrepo                 # discovered local clones
-python3 -m overboard.analysis <slug>           # static analysis of one local repo
-python3 -m overboard.bitbucket <slug> <branch> # raw commit fetch
-python3 overboard/mcp_server.py                # run the MCP server (stdio)
+python3 -m overboard.localrepo                       # discovered local clones (all sources)
+python3 -m overboard.analysis <slug>                 # static analysis of one local repo
+python3 -m overboard.bitbucket <slug> <branch>       # raw Bitbucket commit fetch
+python3 -m overboard.github <owner> <repo> <branch>  # raw GitHub commit fetch
+python3 overboard/mcp_server.py                      # run the MCP server (stdio)
 ```

@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 # we're launched (this file lives at <root>/overboard/mcp_server.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from overboard import analysis, bitbucket, events, localrepo, manager, store  # noqa: E402
+from overboard import analysis, events, localrepo, manager, providers, store  # noqa: E402
 
 STOP_TYPES = ("Stop", "SubagentStop")
 DASHBOARD_PORT = 8787
@@ -69,21 +69,27 @@ def list_projects():
 
 def get_commits(slug: str, limit: int = 20):
     state, config = store.load_state(), store.load_config()
-    branch = None
+    repo = None
     for p in state.get("projects", {}).values():
         r = p.get("repos", {}).get(slug)
         if r:
-            branch = r.get("branch")
+            repo = {
+                "provider": r.get("provider") or "bitbucket",
+                "workspace": r.get("workspace"),
+                "slug": slug,
+                "branch": r.get("branch"),
+            }
             break
-    if not branch:
+    if not repo or not repo["branch"]:
         return {"error": f"unknown repo {slug!r} (call list_projects)"}
-    env = store.load_env()
-    session = bitbucket.make_session(env["ATLASSIAN_EMAIL"], env["BITBUCKET_API_TOKEN"])
+    src = next((s for s in store.load_sources(config) if s["provider"] == repo["provider"]), None)
+    if not src:
+        return {"error": f"{repo['provider']} source not configured for {slug!r}"}
+    repo["workspace"] = repo["workspace"] or src.get("workspace") or config.get("workspace")
     try:
-        commits = bitbucket.fetch_recent_commits(
-            session, config["workspace"], slug, branch, pagelen=min(max(limit, 1), 50)
-        )
-    except bitbucket.BitbucketError as e:
+        session = providers.make_session(src)
+        commits = providers.commits(repo, session, pagelen=min(max(limit, 1), 50))
+    except providers.ProviderError as e:
         return {"error": str(e)}
     return commits[:limit]
 
