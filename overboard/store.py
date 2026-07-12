@@ -95,6 +95,9 @@ def fresh_state() -> dict:
         "local_links": {},
         # Static + AI analysis per repo slug, cached on the repo's local HEAD.
         "analysis": {},
+        # Content-hash keys of review items the user has dismissed ("OK"'d), so
+        # they don't reappear across refreshes. Dashboard-owned.
+        "dismissed_reviews": [],
     }
 
 

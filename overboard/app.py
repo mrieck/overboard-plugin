@@ -41,6 +41,12 @@ def _slug_signature(slugs: list[str]) -> str:
     return hashlib.sha1("\n".join(sorted(slugs)).encode()).hexdigest()
 
 
+def _review_key(project: str, text: str) -> str:
+    """Stable content key for a review item, so a dismissed item stays dismissed
+    across refreshes (and re-appears only if its text actually changes)."""
+    return hashlib.sha1(f"{project}\0{text}".encode()).hexdigest()
+
+
 def _prefix_group(slugs: list[str]) -> dict[str, list[str]]:
     """Fallback grouping when AI is unavailable: cluster by the name stem
     before the first '-'."""
@@ -98,6 +104,7 @@ def perform_refresh(config: dict, env: dict, old_state: dict) -> dict:
     new_state["unseen_activity"] = old_state.get("unseen_activity", False)
     new_state["local_links"] = old_state.get("local_links", {})
     new_state["analysis"] = old_state.get("analysis", {})
+    new_state["dismissed_reviews"] = old_state.get("dismissed_reviews", [])
 
     window_days = config["commit_window_days"]
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
@@ -316,6 +323,7 @@ class Api:
         links = localrepo.links_for_machine(state)
         analyzed = state.get("analysis", {})
         activity = state.get("activity", {})
+        dismissed = set(state.get("dismissed_reviews", []))
         projects = []
         for name in state.get("project_order", []):
             p = state.get("projects", {}).get(name)
@@ -344,9 +352,13 @@ class Api:
                         flags.append(e["note"])
             feed.sort(key=lambda e: e.get("ts", 0), reverse=True)
             # AI content is overlaid from the agent-owned ai.json. Human-flagged
-            # items come first, then the agent's digest review items.
+            # items come first, then the agent's digest review items. Anything
+            # the user has dismissed ("OK") is filtered out.
             dig = ai_dig.get(name) or {}
-            review = flags + list(dig.get("review", []))
+            review = [
+                r for r in (flags + list(dig.get("review", [])))
+                if _review_key(name, r) not in dismissed
+            ]
             projects.append({
                 "name": name,
                 "summary": (ai_sum.get(name) or {}).get("text"),
@@ -420,6 +432,15 @@ class Api:
         store.save_state(self.state)
         return self._build_view()
 
+    def dismiss_review(self, project: str, text: str) -> dict:
+        """Mark a review item as handled ("OK") so it stops showing."""
+        key = _review_key(project, text)
+        lst = self.state.setdefault("dismissed_reviews", [])
+        if key not in lst:
+            lst.append(key)
+            store.save_state(self.state)
+        return self._build_view()
+
     def analyze(self, slug: str) -> dict:
         """Run analysis for one repo's local clone, reusing the cached result
         when the clone's HEAD is unchanged."""
@@ -482,7 +503,7 @@ def _make_handler(api: "Api"):
 
     web_dir = Path(__file__).resolve().parent / "web"
     ALLOWED = {"get_view", "refresh", "tick", "rescan_local", "analyze",
-               "get_analysis", "open_terminal"}
+               "get_analysis", "open_terminal", "dismiss_review"}
     CONTENT_TYPES = {
         ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
         ".json": "application/json", ".svg": "image/svg+xml",

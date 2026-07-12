@@ -326,7 +326,19 @@ function renderReport(proj) {
       ul.className = "rep-review";
       for (const r of proj.review) {
         const li = document.createElement("li");
-        li.textContent = r;
+        const txt = document.createElement("span");
+        txt.textContent = r;
+        li.appendChild(txt);
+        const ok = document.createElement("button");
+        ok.className = "review-ok";
+        ok.textContent = "OK";
+        ok.title = "Dismiss — I've seen this";
+        ok.addEventListener("click", async () => {
+          ok.disabled = true;
+          VIEW = await call("dismiss_review", { project: proj.name, text: r });
+          render();
+        });
+        li.appendChild(ok);
         ul.appendChild(li);
       }
       host.appendChild(ul);
