@@ -470,11 +470,17 @@ function repoBadge(r) {
 
   if (r.local_path) {
     const loc = document.createElement("span");
-    loc.className = "loc link";
+    loc.className = "loc";
     loc.textContent = "local";
-    loc.title = "Open " + r.local_path;
-    loc.addEventListener("click", (e) => { e.stopPropagation(); call("open_local", { path: r.local_path }); });
+    loc.title = r.local_path;
     b.appendChild(loc);
+
+    const term = document.createElement("span");
+    term.className = "loc link";
+    term.textContent = "terminal ↗";
+    term.title = "Open a terminal in " + r.local_path;
+    term.addEventListener("click", (e) => { e.stopPropagation(); call("open_terminal", { path: r.local_path }); });
+    b.appendChild(term);
   } else {
     const loc = document.createElement("span");
     loc.className = "loc";

@@ -6,6 +6,9 @@ Headless refresh:      python -m overboard.app --once
 
 import hashlib
 import json
+import os
+import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -468,15 +471,10 @@ class Api:
         finally:
             self._analysis_lock.release()
 
-    def open_local(self, path: str) -> bool:
-        if not path or not Path(path).exists():
+    def open_terminal(self, path: str) -> bool:
+        if not path or not Path(path).is_dir():
             return False
-        opener = "open" if sys.platform == "darwin" else "xdg-open"
-        try:
-            subprocess.Popen([opener, path])
-            return True
-        except OSError:
-            return False
+        return _open_terminal(path)
 
 
 def _make_handler(api: "Api"):
@@ -484,7 +482,7 @@ def _make_handler(api: "Api"):
 
     web_dir = Path(__file__).resolve().parent / "web"
     ALLOWED = {"get_view", "refresh", "tick", "rescan_local", "analyze",
-               "get_analysis", "open_local"}
+               "get_analysis", "open_terminal"}
     CONTENT_TYPES = {
         ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
         ".json": "application/json", ".svg": "image/svg+xml",
@@ -546,6 +544,40 @@ def _make_handler(api: "Api"):
             self._json(result)
 
     return Handler
+
+
+def _open_terminal(path: str) -> bool:
+    """Open a terminal emulator with its working directory at `path`. Returns
+    True if something was launched. macOS is the primary target (prefers iTerm,
+    falls back to Terminal); on Linux the first available emulator wins."""
+    if sys.platform == "darwin":
+        app = "iTerm" if os.path.isdir("/Applications/iTerm.app") else "Terminal"
+        cmd = ["open", "-a", app, path]
+    else:
+        # (binary, extra args) tried in order; the first on PATH is used.
+        candidates = [
+            ("gnome-terminal", ["--working-directory=" + path]),
+            ("konsole", ["--workdir", path]),
+            ("xfce4-terminal", ["--working-directory=" + path]),
+            ("tilix", ["--working-directory=" + path]),
+            ("terminator", ["--working-directory=" + path]),
+            ("kitty", ["--directory", path]),
+            ("alacritty", ["--working-directory", path]),
+            ("x-terminal-emulator", ["--working-directory=" + path]),  # last resort
+            ("xterm", ["-e", "bash", "-c", f"cd {shlex.quote(path)}; exec bash"]),
+        ]
+        cmd = None
+        for binary, args in candidates:
+            if shutil.which(binary):
+                cmd = [binary, *args]
+                break
+        if cmd is None:
+            return False
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
 
 
 def _open_url(url: str) -> None:
