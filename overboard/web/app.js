@@ -280,6 +280,14 @@ function renderReport(proj) {
   const h = document.createElement("h2");
   h.textContent = proj.name;
   h.appendChild(chip(proj));
+  if (proj.activity && proj.activity.length) {
+    const ab = document.createElement("button");
+    ab.className = "btn ghost small activity-btn";
+    ab.textContent = `Recent activity (${proj.activity.length})`;
+    ab.title = "Show recent activity from the working Claudes";
+    ab.addEventListener("click", () => openActivityModal(proj));
+    h.appendChild(ab);
+  }
   main.appendChild(h);
   const sum = document.createElement("p");
   sum.className = "rep-summary";
@@ -325,26 +333,7 @@ function renderReport(proj) {
     }
   }
 
-  // Recent activity from the working Claudes.
-  if (proj.activity && proj.activity.length) {
-    host.appendChild(sectionTitle("Recent activity"));
-    const ul = document.createElement("ul");
-    ul.className = "feed";
-    for (const e of proj.activity.slice(0, 14)) {
-      const li = document.createElement("li");
-      const l = document.createElement("span");
-      l.textContent = eventLabel(e);
-      const t = document.createElement("span");
-      t.className = "feed-when subtle";
-      t.textContent = ago(e.ts);
-      li.appendChild(l);
-      li.appendChild(t);
-      ul.appendChild(li);
-    }
-    host.appendChild(ul);
-  }
-
-  // Repositories — click a local one to analyze it in-panel.
+  // Repositories — analysis for local ones is auto-loaded below.
   host.appendChild(sectionTitle("Repositories"));
   const repos = document.createElement("div");
   repos.className = "repos";
@@ -352,18 +341,87 @@ function renderReport(proj) {
   host.appendChild(repos);
 }
 
+// The activity modal is project-scoped, so labels drop the repo suffix and
+// render tool events cleanly (a bare Bash command split on "/" was garbled).
 function eventLabel(e) {
   const base = (p) => (p ? String(p).split("/").pop() : "");
   switch (e.type) {
-    case "Stop": return `finished in ${e.repo}`;
-    case "SubagentStop": return `${e.agent_type || "subagent"} finished in ${e.repo}`;
-    case "PostToolUse": return `${e.tool_name || "edit"} ${base(e.target)} in ${e.repo}`;
-    case "SessionStart": return `session started in ${e.repo}`;
-    case "SessionEnd": return `session ended in ${e.repo}`;
-    case "flag": return `flagged for review in ${e.repo}`;
-    case "status": return `${e.note ? e.note.slice(0, 60) : "status"} · ${e.repo}`;
-    default: return `${e.type} in ${e.repo}`;
+    case "Stop": return "finished a task";
+    case "SubagentStop": return `${e.agent_type || "subagent"} finished`;
+    case "PostToolUse": {
+      const tool = e.tool_name || "edit";
+      if (tool === "Bash") {
+        const cmd = (e.target || "").split("\n")[0].trim();
+        return cmd ? "$ " + (cmd.length > 64 ? cmd.slice(0, 64) + "…" : cmd) : "ran a command";
+      }
+      const f = base(e.target);
+      return f ? `${tool.toLowerCase()} ${f}` : tool.toLowerCase();
+    }
+    case "SessionStart": return "session started";
+    case "SessionEnd": return "session ended";
+    case "flag": return e.note ? `⚑ ${e.note.slice(0, 80)}` : "flagged for review";
+    case "status": return e.note ? e.note.slice(0, 80) : "status";
+    default: return e.type;
   }
+}
+
+// ---- recent-activity popup -------------------------------------------------
+function openActivityModal(proj) {
+  closeActivityModal();
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay";
+  ov.id = "activity-modal";
+  ov.addEventListener("click", (e) => { if (e.target === ov) closeActivityModal(); });
+
+  const box = document.createElement("div");
+  box.className = "modal";
+
+  const head = document.createElement("div");
+  head.className = "modal-head";
+  const h = document.createElement("h3");
+  h.textContent = `Recent activity · ${proj.name}`;
+  const close = document.createElement("button");
+  close.className = "btn ghost small";
+  close.textContent = "Close";
+  close.addEventListener("click", closeActivityModal);
+  head.appendChild(h);
+  head.appendChild(close);
+  box.appendChild(head);
+
+  const acts = proj.activity || [];
+  if (!acts.length) {
+    box.appendChild(note("No recent activity."));
+  } else {
+    const ul = document.createElement("ul");
+    ul.className = "feed modal-feed";
+    for (const ev of acts.slice(0, 40)) {
+      const li = document.createElement("li");
+      const l = document.createElement("span");
+      l.textContent = eventLabel(ev);
+      l.title = ev.last_message || ev.target || "";
+      const t = document.createElement("span");
+      t.className = "feed-when subtle";
+      t.textContent = ago(ev.ts);
+      li.appendChild(l);
+      li.appendChild(t);
+      ul.appendChild(li);
+    }
+    box.appendChild(ul);
+  }
+
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+  document.addEventListener("keydown", _escClose);
+}
+
+function closeActivityModal() {
+  const m = document.getElementById("activity-modal");
+  if (m) m.remove();
+  document.removeEventListener("keydown", _escClose);
+}
+
+function _escClose(e) {
+  if (e.key === "Escape") closeActivityModal();
 }
 
 function ago(ts) {

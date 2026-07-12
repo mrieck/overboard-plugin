@@ -141,6 +141,32 @@ html, body {
 .rep-review { margin: 2px 0 4px; padding-left: 18px; }
 .rep-review li { color: var(--text); font-size: 12.5px; margin: 3px 0; }
 
+.activity-btn { font-weight: 500; }
+
+/* recent-activity popup */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 40;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: min(560px, 92%);
+  max-height: 80vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.modal-head h3 { margin: 0; font-size: 14px; }
+.modal-feed { padding: 6px 16px 14px; overflow-y: auto; }
+
 .feed { list-style: none; margin: 4px 0; padding: 0; }
 .feed li {
   display: flex; justify-content: space-between; gap: 10px;
