@@ -132,6 +132,9 @@ def load_config() -> dict:
                     )
     config.setdefault("refresh_interval_minutes", 60)
     config.setdefault("commit_window_days", 30)
+    # A "day" for the activity grid begins at this local hour (so e.g. a 2am
+    # commit counts toward the previous day). Default 5am.
+    config.setdefault("day_start_hour", 5)
     return config
 
 

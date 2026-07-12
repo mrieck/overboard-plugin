@@ -39,6 +39,13 @@ def _parse_date(iso: str) -> datetime | None:
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _logical_day_key(dt: datetime, start_hour: int = 5) -> str:
+    """Local calendar date under a day that begins at `start_hour` (default 5am):
+    a commit before 5am local counts toward the previous day. Shifting back by
+    `start_hour` and taking the date does exactly that."""
+    return (dt.astimezone() - timedelta(hours=start_hour)).strftime("%Y-%m-%d")
+
+
 def _updated_at(repo: dict) -> datetime:
     """Parsed activity time for cross-provider comparison. Bitbucket and GitHub
     format timestamps differently (`…+00:00` vs `…Z`), so compare real dates,
@@ -141,9 +148,8 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
 
     window_days = config["commit_window_days"]
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
-    local_midnight = datetime.now().astimezone().replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    start_hour = config.get("day_start_hour", 5)
+    today_key = _logical_day_key(datetime.now(timezone.utc), start_hour)
 
     new_state["last_refresh"] = _now_iso()
     if not sources:
@@ -209,7 +215,7 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
                 if d is None or d < cutoff:
                     continue
                 recent.append(c)
-                if d >= local_midnight:
+                if _logical_day_key(d, start_hour) == today_key:
                     commits_today += 1
             window_commits[slug] = recent
 
@@ -221,7 +227,7 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
                 d = _parse_date(c["date"])
                 if d is None:
                     continue
-                key = d.astimezone().strftime("%Y-%m-%d")
+                key = _logical_day_key(d, start_hour)
                 daily_counts[key] = daily_counts.get(key, 0) + 1
 
         head_sig = "|".join(f"{s}:{r.get('head')}" for s, r in sorted(repos_state.items()))
@@ -406,6 +412,7 @@ class Api:
             "refreshing": self._refreshing,
             "machine": localrepo.machine_key(),
             "window_days": self.config.get("commit_window_days", 30),
+            "day_start_hour": self.config.get("day_start_hour", 5),
         }
 
     def _overlay_ai(self, slug: str, result: dict) -> dict:

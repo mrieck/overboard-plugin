@@ -238,13 +238,16 @@ function dayKey(d) {
   return `${y}-${m}-${da}`;
 }
 
-// Most recent `days` days, oldest first, with counts.
+// Most recent `days` logical days, oldest first, with counts. A "day" begins at
+// day_start_hour local (default 5am), so we anchor at now-minus-that-many-hours
+// before enumerating — matching the backend's bucket keys exactly.
 function dailySeries(counts, days) {
   const out = [];
-  const today = new Date();
+  const startHour = (VIEW && VIEW.day_start_hour != null) ? VIEW.day_start_hour : 5;
+  const anchor = new Date(Date.now() - startHour * 3600 * 1000);
   for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
+    const d = new Date(anchor);
+    d.setDate(anchor.getDate() - i);
     const key = dayKey(d);
     out.push({ key, count: counts[key] || 0 });
   }
