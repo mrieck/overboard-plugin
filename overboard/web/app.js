@@ -207,7 +207,7 @@ function chipMini(proj) {
     c.textContent = "● active";
   } else if (proj.days_idle != null) {
     c.classList.add("idle");
-    c.textContent = `idle ${proj.days_idle}d`;
+    c.textContent = `${proj.days_idle}d ago`;
   } else {
     c.classList.add("idle");
     c.textContent = "no data";
@@ -471,7 +471,7 @@ function chip(proj) {
     c.textContent = "● active today";
   } else if (proj.days_idle != null) {
     c.className = "chip idle";
-    c.textContent = `idle ${proj.days_idle} day${proj.days_idle === 1 ? "" : "s"}`;
+    c.textContent = `${proj.days_idle} day${proj.days_idle === 1 ? "" : "s"} ago`;
   } else {
     c.className = "chip idle";
     c.textContent = "no data";

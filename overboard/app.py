@@ -271,7 +271,7 @@ def run_once() -> int:
         if p["commits_today"]:
             chip = f"{p['commits_today']} commit(s) today"
         elif p["days_idle"] is not None:
-            chip = f"idle {p['days_idle']} day(s)"
+            chip = f"{p['days_idle']} day(s) ago"
         else:
             chip = "no data"
         window_total = sum((p.get("daily_counts") or {}).values())
