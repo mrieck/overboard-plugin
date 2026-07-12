@@ -1,0 +1,11 @@
+{
+  "name": "overboard-marketplace",
+  "owner": { "name": "Mark Rieck" },
+  "plugins": [
+    {
+      "name": "overboard",
+      "source": "./",
+      "description": "Project-manager dashboard: what matters across all your projects, with live 'needs review' items from your working Claude sessions."
+    }
+  ]
+}

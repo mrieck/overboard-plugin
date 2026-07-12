@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "overboard": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/overboard/mcp_server.py"]
+    }
+  }
+}
