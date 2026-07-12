@@ -288,6 +288,7 @@ class Api:
         self.state = store.load_state()
         self._refreshing = False
         self._lock = threading.Lock()
+        self._analysis_lock = threading.Lock()
         self._window = None
         # First run on this machine: discover local clones so badges work
         # immediately, before any manual rescan.
@@ -297,6 +298,9 @@ class Api:
                 store.save_state(self.state)
             except Exception:  # discovery must never block startup
                 pass
+        # Static analysis is free (no API), so pre-warm it in the background so
+        # every project's details are ready without the user asking.
+        self._kick_analyses()
 
     # ---- read -----------------------------------------------------------
     def get_view(self) -> dict:
@@ -393,6 +397,9 @@ class Api:
             self.state["last_error"] = f"refresh failed: {e}"
         finally:
             self._refreshing = False
+        # New commits may have moved a clone's HEAD — re-run analysis in the
+        # background so details stay current without a button.
+        self._kick_analyses()
         return self._build_view()
 
     def tick(self) -> dict:
@@ -428,6 +435,38 @@ class Api:
         self.state.setdefault("analysis", {})[slug] = result
         store.save_state(self.state)
         return self._overlay_arch(slug, result)
+
+    def _kick_analyses(self) -> None:
+        """Spawn a background pass that analyzes every local clone whose cache is
+        missing or stale (HEAD moved / analyzer bumped). Static-only, no API, so
+        it's safe to run unattended; the frontend just reads the cached result."""
+        threading.Thread(target=self._ensure_analyses, daemon=True).start()
+
+    def _ensure_analyses(self) -> None:
+        if not self._analysis_lock.acquire(blocking=False):
+            return  # one analyzer at a time is enough
+        try:
+            links = localrepo.links_for_machine(self.state)
+            changed = False
+            for slug, path in links.items():
+                try:
+                    head = analysis.git_head(Path(path))
+                except Exception:
+                    continue
+                cached = self.state.get("analysis", {}).get(slug)
+                if (cached and head and cached.get("head") == head
+                        and cached.get("analyzer_version") == analysis._ANALYZER_VERSION):
+                    continue  # up to date
+                try:
+                    result = analysis.analyze_repo(path, slug)  # static only
+                except Exception:
+                    continue
+                self.state.setdefault("analysis", {})[slug] = result
+                changed = True
+            if changed:
+                store.save_state(self.state)
+        finally:
+            self._analysis_lock.release()
 
     def open_local(self, path: str) -> bool:
         if not path or not Path(path).exists():

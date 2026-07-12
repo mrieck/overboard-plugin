@@ -117,9 +117,14 @@ html, body {
 .detail-empty { color: var(--muted); text-align: center; padding: 80px 20px; }
 .detail-inner { padding: 18px 22px; max-width: 900px; }
 
-.rep-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.rep-head h2 { margin: 0; font-size: 20px; }
-.rep-grid { display: flex; align-items: center; gap: 12px; margin: 12px 0 4px; }
+.rep-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+.rep-top-main { flex: 1; min-width: 0; }
+.rep-top-main h2 {
+  margin: 0 0 6px; font-size: 20px;
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+}
+.rep-top-main h2 .chip { font-size: 12px; font-weight: 400; }
+.rep-top-grid { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
 
 .chip { font-size: 12px; white-space: nowrap; }
 .chip.active { color: var(--green); }

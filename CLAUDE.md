@@ -65,10 +65,18 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
   name + a GitHub-style **30-day activity grid** (6×5 cells, `lvl-0..lvl-4`
   intensity) + a compact active/idle chip + a `⚑ N` review flag when the
   assistant has flagged items. Clicking a row selects the project.
-- **Right panel**: the selected project's full detail — summary, the assistant's
-  report (narrative + review flags), recent activity from the team, and the
-  repositories. Clicking a local repo's "analyze/details" loads its analysis
-  (Overview / Prompts / Data shape) inline below the report.
+- **Right panel**: the selected project's full detail. Top row = **summary on the
+  left, 30-day commit grid on the right**. Below: the assistant's report
+  (narrative + review flags), recent activity from the team, the repositories,
+  and — **always shown, no button** — each local repo's analysis (Overview /
+  Prompts / Data shape).
+
+**Analysis is automatic.** It's static-only (no API), so there's no "analyze"
+button: `Api._ensure_analyses` runs in a background thread (kicked on init and on
+every refresh) and analyzes any local clone whose cache is missing or stale
+(HEAD moved / `_ANALYZER_VERSION` bumped), caching into `state.json`. The frontend
+`loadAnalyses` reads it on project select (and re-pulls on Refresh). Keep it
+buttonless — don't gate free static work behind a click.
 
 Frontend is vanilla HTML/JS (`web/index.html`, `app.js`, `styles.css`), no build
 step, `fetch('/api/<method>')` to the Python `Api`. Mermaid is vendored offline.

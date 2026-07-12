@@ -11,8 +11,8 @@ async function call(method, args) {
 }
 
 let VIEW = null;
-let SELECTED = null;                                  // selected project name
-let ANALYSIS = { slug: null, tab: "overview", data: null }; // open repo analysis
+let SELECTED = null;   // selected project name
+let ANALYSES = {};     // slug -> { tab, data, error, loading } for that project's local repos
 
 function boot() {
   if (window.mermaid) {
@@ -82,6 +82,9 @@ async function refresh() {
   try {
     VIEW = await call("refresh");
     render();
+    // New commits may have moved a clone's HEAD — re-pull the analyses too.
+    const proj = currentProject();
+    if (proj) loadAnalyses(proj);
   } finally {
     _refreshingNow = false;
     btn.disabled = false;
@@ -114,7 +117,7 @@ function render() {
   if (!proj) {
     // Selection is gone (or nothing selected yet) — reset the right panel.
     SELECTED = null;
-    ANALYSIS = { slug: null, tab: "overview", data: null };
+    ANALYSES = {};
     detail.innerHTML = '<div class="detail-empty">Select a project on the left.</div>';
     return;
   }
@@ -243,12 +246,15 @@ function activityGrid(counts, big) {
 // ---- right panel: project report -------------------------------------------
 function selectProject(name) {
   SELECTED = name;
-  ANALYSIS = { slug: null, tab: "overview", data: null };
+  ANALYSES = {};
   const detail = document.getElementById("detail");
   detail.innerHTML =
     '<div class="detail-inner"><div id="detail-report"></div><div id="detail-analysis"></div></div>';
   const proj = currentProject();
-  if (proj) renderReport(proj);
+  if (proj) {
+    renderReport(proj);
+    loadAnalyses(proj); // auto — no button
+  }
   renderSidebar(); // move the selected highlight
 }
 
@@ -265,32 +271,34 @@ function renderReport(proj) {
   const host = document.getElementById("detail-report");
   host.textContent = "";
 
-  const head = document.createElement("div");
-  head.className = "rep-head";
+  // Top row: summary on the left, 30-day commit grid on the right.
+  const top = document.createElement("div");
+  top.className = "rep-top";
+
+  const main = document.createElement("div");
+  main.className = "rep-top-main";
   const h = document.createElement("h2");
   h.textContent = proj.name;
-  head.appendChild(h);
-  head.appendChild(chip(proj));
-  host.appendChild(head);
-
-  // Large 30-day grid + commit total.
-  const total = Object.values(proj.daily_counts || {}).reduce((a, b) => a + b, 0);
-  const gwrap = document.createElement("div");
-  gwrap.className = "rep-grid";
-  gwrap.appendChild(activityGrid(proj.daily_counts, true));
-  const gl = document.createElement("span");
-  gl.className = "subtle";
-  gl.textContent = `${total} commit${total === 1 ? "" : "s"} in the last 30 days`;
-  gwrap.appendChild(gl);
-  host.appendChild(gwrap);
-
-  // Summary.
-  host.appendChild(sectionTitle("Summary"));
+  h.appendChild(chip(proj));
+  main.appendChild(h);
   const sum = document.createElement("p");
   sum.className = "rep-summary";
   sum.textContent = proj.summary
     || (VIEW.agent_has_run ? "No summary yet." : "Run /overboard to have your assistant write summaries.");
-  host.appendChild(sum);
+  main.appendChild(sum);
+  top.appendChild(main);
+
+  const total = Object.values(proj.daily_counts || {}).reduce((a, b) => a + b, 0);
+  const gcol = document.createElement("div");
+  gcol.className = "rep-top-grid";
+  gcol.appendChild(activityGrid(proj.daily_counts, true));
+  const gl = document.createElement("span");
+  gl.className = "subtle";
+  gl.textContent = `${total} commit${total === 1 ? "" : "s"} · 30 days`;
+  gcol.appendChild(gl);
+  top.appendChild(gcol);
+
+  host.appendChild(top);
 
   // Assistant report: narrative + review flags.
   if (proj.pm_narrative || (proj.review && proj.review.length)) {
@@ -409,11 +417,6 @@ function repoBadge(r) {
     loc.title = "Open " + r.local_path;
     loc.addEventListener("click", (e) => { e.stopPropagation(); call("open_local", { path: r.local_path }); });
     b.appendChild(loc);
-
-    const analyze = document.createElement("button");
-    analyze.textContent = r.has_analysis ? "details" : "analyze";
-    analyze.addEventListener("click", () => openRepoAnalysis(r.slug));
-    b.appendChild(analyze);
   } else {
     const loc = document.createElement("span");
     loc.className = "loc";
@@ -423,55 +426,72 @@ function repoBadge(r) {
   return b;
 }
 
-// ---- repo analysis (rendered in-panel, below the report) -------------------
+// ---- repo analysis (auto-loaded, always shown below the report) ------------
 const AN_TABS = [
   ["overview", "Overview"],
   ["prompts", "Prompts"],
   ["db", "Data shape"],
 ];
 
-async function openRepoAnalysis(slug) {
-  ANALYSIS = { slug, tab: "overview", data: null };
-  const host = document.getElementById("detail-analysis");
-  host.innerHTML =
-    `<div class="analysis"><div class="an-head"><h3>${escapeHtml(slug)}</h3></div>` +
-    `<div class="spinner">Analyzing local clone…</div></div>`;
-  const data = await call("analyze", { slug });
-  if (ANALYSIS.slug !== slug) return; // user switched away while we waited
-  ANALYSIS.data = data;
-  if (data && data.error) {
-    host.querySelector(".analysis").innerHTML =
-      `<div class="an-head"><h3>${escapeHtml(slug)}</h3></div>` +
-      `<div class="spinner">${escapeHtml(data.error)}</div>`;
-    return;
-  }
-  renderAnalysis();
-  host.scrollIntoView({ behavior: "smooth", block: "start" });
+// Load static analysis for every local repo of the project (no button). The
+// backend caches by clone HEAD and pre-warms in the background, so this is
+// usually instant and re-runs itself when new commits move HEAD.
+async function loadAnalyses(proj) {
+  const locals = proj.repos.filter((r) => r.local_path);
+  ANALYSES = {};
+  for (const r of locals) ANALYSES[r.slug] = { tab: "overview", data: null, error: null, loading: true };
+  renderAnalyses();
+  await Promise.all(locals.map(async (r) => {
+    try {
+      const data = await call("analyze", { slug: r.slug });
+      if (SELECTED !== proj.name || !ANALYSES[r.slug]) return; // switched away
+      if (data && data.error) ANALYSES[r.slug] = { ...ANALYSES[r.slug], error: data.error, loading: false };
+      else ANALYSES[r.slug] = { ...ANALYSES[r.slug], data, loading: false };
+    } catch (e) {
+      if (ANALYSES[r.slug]) ANALYSES[r.slug] = { ...ANALYSES[r.slug], error: String(e), loading: false };
+    }
+  }));
+  if (SELECTED === proj.name) renderAnalyses();
 }
 
-function renderAnalysis() {
+function renderAnalyses() {
   const host = document.getElementById("detail-analysis");
-  const d = ANALYSIS.data;
-  if (!d) return;
+  if (!host) return;
+  host.textContent = "";
+  const slugs = Object.keys(ANALYSES);
+  if (!slugs.length) return; // no local clones — nothing to analyze
+  host.appendChild(sectionTitle("Analysis"));
+  for (const slug of slugs) host.appendChild(analysisBlock(slug));
+}
 
+function analysisBlock(slug) {
+  const a = ANALYSES[slug];
   const box = document.createElement("div");
   box.className = "analysis";
 
   const head = document.createElement("div");
   head.className = "an-head";
   const h = document.createElement("h3");
-  h.textContent = ANALYSIS.slug;
+  h.textContent = slug;
   head.appendChild(h);
-  const close = document.createElement("button");
-  close.className = "btn ghost small";
-  close.textContent = "Close";
-  close.addEventListener("click", () => {
-    ANALYSIS = { slug: null, tab: "overview", data: null };
-    host.textContent = "";
-  });
-  head.appendChild(close);
   box.appendChild(head);
 
+  if (a.loading) {
+    const s = document.createElement("div");
+    s.className = "spinner";
+    s.textContent = "Analyzing local clone…";
+    box.appendChild(s);
+    return box;
+  }
+  if (a.error || !a.data) {
+    const s = document.createElement("div");
+    s.className = "spinner";
+    s.textContent = a.error || "analysis unavailable";
+    box.appendChild(s);
+    return box;
+  }
+
+  const d = a.data;
   const nav = document.createElement("nav");
   nav.className = "tabs";
   for (const [key, label] of AN_TABS) {
@@ -480,21 +500,19 @@ function renderAnalysis() {
     if (key === "prompts") n = ` (${d.prompts.length})`;
     if (key === "db") n = ` (${d.db.length})`;
     b.textContent = label + n;
-    b.className = ANALYSIS.tab === key ? "on" : "";
-    b.addEventListener("click", () => { ANALYSIS.tab = key; renderAnalysis(); });
+    b.className = a.tab === key ? "on" : "";
+    b.addEventListener("click", () => { a.tab = key; renderAnalyses(); });
     nav.appendChild(b);
   }
   box.appendChild(nav);
 
   const body = document.createElement("div");
   body.className = "tab-body";
-  if (ANALYSIS.tab === "overview") body.appendChild(overviewTab(d));
-  else if (ANALYSIS.tab === "prompts") body.appendChild(promptsTab(d));
-  else if (ANALYSIS.tab === "db") body.appendChild(dbTab(d));
+  if (a.tab === "overview") body.appendChild(overviewTab(d));
+  else if (a.tab === "prompts") body.appendChild(promptsTab(d));
+  else if (a.tab === "db") body.appendChild(dbTab(d));
   box.appendChild(body);
-
-  host.textContent = "";
-  host.appendChild(box);
+  return box;
 }
 
 function overviewTab(d) {
