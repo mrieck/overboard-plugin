@@ -33,9 +33,16 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
      *Writing digests*.
    - **Refresh the dashboard panels** for each *local* repo (see *Maintaining
      the panels* below) — real prompts, setup/run, snippets, architecture.
-3. Flag anything genuinely worth the CTO's eyes with
-   **`flag_for_review(project, note)`** — risky changes, decisions made, things
-   left unfinished, things to test. Don't flag routine progress.
+3. **Flags are signal, not a changelog.** Use **`flag_for_review(project, note)`**
+   ONLY for things the CTO must know or act on:
+   - **Needs human action** — something the finished-work (stop) message says the
+     human has to do: restart a service, add an API key/secret, run a migration,
+     make a decision, or review a risky change before it ships.
+   - **A gotcha** — a non-obvious way it now works that could bite them later.
+   - **An assumption** — a choice the Claude made on its own that the CTO might
+     want to override.
+   Do NOT flag "added feature X" / "did the task" — the CTO requested that work
+   and already knows what was built. If nothing clears that bar, flag nothing.
 
 Then you're done until the next pass. Under `/loop`, only act when
 `get_pending_work` returns something — idle projects should cost nothing.
@@ -77,9 +84,12 @@ From the project's recent finished-work events (each has the assistant's closing
 `last_message` and touched `target` files):
 
 - **narrative**: one sentence — what the team is doing on this project right now.
-- **review**: 0–4 short, *specific* items the CTO should check (not vibes). Only
-  things genuinely worth attention. Prefer "auth refactor landed but tests not
-  run" over "made progress".
+- **review**: 0–4 items, held to the **same bar as flags** (above) — things the
+  CTO must act on, gotchas in how it now works, or assumptions the Claude made.
+  **Not a summary of what was built** — they asked for it, they know. Prefer
+  "assumes Redis is running — crashes without it" or "needs STRIPE_KEY set before
+  deploy" over "added the checkout flow". If nothing qualifies, return an empty
+  list.
 
 ## The panels themselves
 
