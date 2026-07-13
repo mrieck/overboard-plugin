@@ -396,6 +396,7 @@ class Api:
         self._refreshing = False
         self._lock = threading.Lock()
         self._analysis_lock = threading.Lock()
+        self._sync_lock = threading.Lock()
         self._window = None
         # First run on this machine: discover local clones so badges work
         # immediately, before any manual rescan.
@@ -408,6 +409,7 @@ class Api:
         # Static analysis is free (no API), so pre-warm it in the background so
         # every project's details are ready without the user asking.
         self._kick_analyses()
+        self._kick_sync()
 
     # ---- read -----------------------------------------------------------
     def get_view(self) -> dict:
@@ -418,6 +420,7 @@ class Api:
         ai = store.load_ai()
         ai_sum, ai_dig = ai.get("summaries", {}), ai.get("digests", {})
         links = localrepo.links_for_machine(state)
+        sync_map = state.get("local_sync", {}).get(localrepo.machine_key(), {})
         analyzed = state.get("analysis", {})
         activity = state.get("activity", {})
         dismissed = set(state.get("dismissed_reviews", []))
@@ -434,6 +437,7 @@ class Api:
                     "provider": r.get("provider"),
                     "also_providers": [x for x in (r.get("also_providers") or []) if x != r.get("provider")],
                     "local_path": links.get(slug),
+                    "sync": sync_map.get(slug),
                     "fetch_error": r.get("fetch_error"),
                     "has_analysis": slug in analyzed,
                 }
@@ -549,6 +553,7 @@ class Api:
         # New commits may have moved a clone's HEAD — re-run analysis in the
         # background so details stay current without a button.
         self._kick_analyses()
+        self._kick_sync()
         return self._build_view()
 
     def tick(self) -> dict:
@@ -777,6 +782,37 @@ class Api:
                 store.save_state(self.state)
         finally:
             self._analysis_lock.release()
+
+    def _kick_sync(self) -> None:
+        """Spawn a background pass that checks each local clone against its
+        remote (green in sync / yellow unpushed / red unpulled). One
+        `git ls-remote` per clone, so it runs only on startup and Refresh —
+        never on the cheap tick poll."""
+        threading.Thread(target=self._ensure_sync, daemon=True).start()
+
+    def _ensure_sync(self) -> None:
+        if not self._sync_lock.acquire(blocking=False):
+            return  # one sync checker at a time is enough
+        try:
+            links = localrepo.links_for_machine(self.state)
+            synced = self.state.setdefault("local_sync", {}).setdefault(
+                localrepo.machine_key(), {})
+            changed = False
+            for slug, path in links.items():
+                try:
+                    synced[slug] = localrepo.sync_status(Path(path))
+                    changed = True
+                except Exception:  # a broken clone must never kill the pass
+                    continue
+            # Drop entries for clones that no longer exist on this machine.
+            for slug in list(synced):
+                if slug not in links:
+                    del synced[slug]
+                    changed = True
+            if changed:
+                store.save_state(self.state)
+        finally:
+            self._sync_lock.release()
 
     def open_terminal(self, path: str) -> bool:
         if not path or not Path(path).is_dir():

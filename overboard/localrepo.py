@@ -2,11 +2,14 @@
 
 Per-machine: the same repo lives at different paths (or not at all) on
 different computers, so the discovered map is stored in state keyed by the
-machine's node name. No network — this only reads local `.git/config` files.
+machine's node name. Discovery is offline (it only reads local `.git/config`
+files); only `sync_status` talks to the network (one `git ls-remote` per call).
 """
 
 import os
 import platform
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Common places developers keep their clones. Missing roots are skipped, and the
@@ -93,6 +96,92 @@ def git_remote_url(repo_dir: Path) -> str | None:
         elif current and s.startswith("url") and "=" in s:
             urls[current] = s.split("=", 1)[1].strip()
     return urls.get("origin") or next(iter(urls.values()), None)
+
+
+# Never let a credential prompt hang the background sync thread.
+_GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -oBatchMode=yes"}
+
+
+def _git(repo_dir: Path, *args: str, timeout: int = 15) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], cwd=repo_dir, capture_output=True, text=True,
+        timeout=timeout, env={**os.environ, **_GIT_ENV},
+    )
+
+
+def sync_status(repo_dir: Path) -> dict:
+    """Compare a clone's current branch against its remote counterpart.
+
+    Read-only — `git ls-remote` asks origin for the branch tip without
+    fetching, so the clone is never mutated. Returns:
+      status  "ok" (local == remote, clean) | "ahead" (unpushed commits and/or
+              uncommitted tracked edits) | "behind" (remote has commits we
+              don't — includes diverged) | "unknown" (detached / no remote /
+              network or auth failure)
+      plus branch, dirty, ahead (count or None), detail, checked_at.
+    Untracked files are ignored throughout.
+    """
+    from .analysis import git_head  # lazy: analysis imports are heavier
+
+    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    def result(status: str, detail: str = "", branch: str = "",
+               dirty: bool = False, ahead: int | None = None) -> dict:
+        return {"status": status, "branch": branch, "dirty": dirty,
+                "ahead": ahead, "detail": detail, "checked_at": checked_at}
+
+    try:
+        branch_p = _git(repo_dir, "symbolic-ref", "--short", "-q", "HEAD")
+        branch = branch_p.stdout.strip()
+        if branch_p.returncode != 0 or not branch:
+            return result("unknown", "detached HEAD")
+
+        dirty = bool(_git(repo_dir, "status", "--porcelain",
+                          "--untracked-files=no").stdout.strip())
+        head = git_head(repo_dir)
+        if not head:
+            return result("unknown", "could not resolve HEAD", branch, dirty)
+
+        remote_p = _git(repo_dir, "ls-remote", "origin", f"refs/heads/{branch}")
+        if remote_p.returncode != 0:
+            err = (remote_p.stderr or "").strip().splitlines()
+            return result("unknown", err[-1] if err else "ls-remote failed", branch, dirty)
+        remote_sha = remote_p.stdout.split()[0] if remote_p.stdout.split() else None
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return result("unknown", f"git failed: {e}")
+
+    if not remote_sha:  # branch never pushed — everything local is unpushed
+        return result("ahead", "branch not on origin", branch, dirty)
+    if remote_sha == head:
+        if dirty:
+            return result("ahead", "uncommitted changes", branch, True)
+        return result("ok", "", branch)
+
+    try:
+        # Remote tip is an ancestor we already have → strictly ahead.
+        if _git(repo_dir, "merge-base", "--is-ancestor", remote_sha, head).returncode == 0:
+            count_p = _git(repo_dir, "rev-list", "--count", f"{remote_sha}..{head}")
+            ahead = int(count_p.stdout.strip()) if count_p.returncode == 0 else None
+            parts = [f"{ahead or 'some'} commit{'' if ahead == 1 else 's'} not pushed"]
+            if dirty:
+                parts.append("uncommitted changes")
+            return result("ahead", " · ".join(parts), branch, dirty, ahead)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    # Remote tip is unknown locally or not an ancestor: there is remote work
+    # we haven't pulled (possibly diverged). Red wins; note local work too.
+    parts = ["origin has new commits"]
+    try:
+        # If we have the remote object and HEAD isn't part of it, we've diverged.
+        if (_git(repo_dir, "cat-file", "-e", remote_sha).returncode == 0
+                and _git(repo_dir, "merge-base", "--is-ancestor", head, remote_sha).returncode != 0):
+            parts.append("unpushed local commits")
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    if dirty:
+        parts.append("uncommitted changes")
+    return result("behind", " · ".join(parts), branch, dirty)
 
 
 def discover(roots: list[str], matchers: list[tuple[str, str | None]]) -> dict[str, str]:

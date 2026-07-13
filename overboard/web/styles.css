@@ -317,6 +317,10 @@ body.context-collapsed #context .context-head { justify-content: center; padding
 }
 .badge .link { cursor: pointer; }
 .badge .link:hover { text-decoration: underline; }
+.badge .sync { font-weight: 700; }
+.badge .sync.ok { color: var(--green); }
+.badge .sync.ahead { color: var(--amber); }
+.badge .sync.behind { color: var(--red); }
 
 /* ---- repo analysis (in-panel) --------------------------------------------- */
 #detail-analysis { margin-top: 8px; }

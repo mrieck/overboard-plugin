@@ -652,6 +652,9 @@ function repoBadge(r) {
     loc.title = r.local_path;
     b.appendChild(loc);
 
+    const s = syncIcon(r.sync);
+    if (s) b.appendChild(s);
+
     const term = document.createElement("span");
     term.className = "loc link";
     term.textContent = "terminal ↗";
@@ -665,6 +668,22 @@ function repoBadge(r) {
     b.appendChild(loc);
   }
   return b;
+}
+
+// Green ✓ = clone matches origin on its current branch; yellow ⚠ = local work
+// not pushed (commits and/or tracked edits — untracked ignored); red ⚠ = origin
+// has commits not pulled. Checked in the background on startup and Refresh.
+function syncIcon(sync) {
+  if (!sync || sync.status === "unknown") return null; // stay quiet when we can't tell
+  const s = document.createElement("span");
+  s.className = "sync " + sync.status;
+  s.textContent = sync.status === "ok" ? "✓" : "⚠";
+  const when = sync.checked_at ? " (checked " + fmtTime(sync.checked_at) + ")" : "";
+  const where = sync.branch ? "origin/" + sync.branch : "origin";
+  if (sync.status === "ok") s.title = "in sync with " + where + when;
+  else if (sync.status === "ahead") s.title = "not pushed to " + where + ": " + sync.detail + when;
+  else s.title = where + " has work not pulled: " + sync.detail + when;
+  return s;
 }
 
 // ---- repo analysis (auto-loaded, always shown below the report) ------------
