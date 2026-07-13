@@ -181,6 +181,9 @@ def fresh_state() -> dict:
         # Content-hash keys of review items the user has dismissed ("OK"'d), so
         # they don't reappear across refreshes. Dashboard-owned.
         "dismissed_reviews": [],
+        # Server-assigned ids of recent-work cards the user has hidden (✕).
+        # Dashboard-owned; the cards themselves live in ai.json work_reviews.
+        "hidden_work_reviews": [],
     }
 
 
@@ -215,6 +218,11 @@ def fresh_ai() -> dict:
         # Mongo collections, JPA/EF entities, ORM models). Overlays the static
         # scanner. { slug: {"items": [...], "at": iso} }
         "data_shape": {},
+        # Recent-work review cards per project — the assistant's per-sprint delta
+        # layer (what just landed: decisions, new surface, key code). Written via
+        # record_work_review. { project: {"items": [unit…] newest first,
+        #   "basis": {"stop_ts": float, "heads": {slug: full-hash}}, "at": iso} }
+        "work_reviews": {},
         # AI-decided project grouping. The assistant owns how repos cluster into
         # projects AND each project's display name — replacing the prefix-stem
         # heuristic. { "signature": <slug_signature of the full live set>,

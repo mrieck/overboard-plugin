@@ -210,6 +210,7 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
     new_state["local_links"] = old_state.get("local_links", {})
     new_state["analysis"] = old_state.get("analysis", {})
     new_state["dismissed_reviews"] = old_state.get("dismissed_reviews", [])
+    new_state["hidden_work_reviews"] = old_state.get("hidden_work_reviews", [])
 
     window_days = config["commit_window_days"]
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
@@ -419,11 +420,13 @@ class Api:
         state = self.state
         ai = store.load_ai()
         ai_sum, ai_dig = ai.get("summaries", {}), ai.get("digests", {})
+        ai_work = ai.get("work_reviews", {})
         links = localrepo.links_for_machine(state)
         sync_map = state.get("local_sync", {}).get(localrepo.machine_key(), {})
         analyzed = state.get("analysis", {})
         activity = state.get("activity", {})
         dismissed = set(state.get("dismissed_reviews", []))
+        hidden_work = set(state.get("hidden_work_reviews", []))
         projects = []
         for name in state.get("project_order", []):
             p = state.get("projects", {}).get(name)
@@ -474,6 +477,10 @@ class Api:
                 "activity": feed[:25],
                 "review": review[:6],
                 "pm_narrative": dig.get("narrative", ""),
+                "work_reviews": [
+                    u for u in (ai_work.get(name) or {}).get("items", [])
+                    if u.get("id") not in hidden_work
+                ],
             })
         return {
             "projects": projects,
@@ -642,6 +649,18 @@ class Api:
         if key not in lst:
             lst.append(key)
             store.save_state(self.state)
+        return self._build_view()
+
+    def hide_work_review(self, project: str, id: str) -> dict:
+        """Hide a recent-work card (✕). Ids are server-assigned in ai.json, so
+        prune the hidden list against the live cards to keep it from growing."""
+        lst = self.state.setdefault("hidden_work_reviews", [])
+        if id not in lst:
+            lst.append(id)
+        live = {u.get("id") for wr in store.load_ai().get("work_reviews", {}).values()
+                for u in wr.get("items", [])}
+        self.state["hidden_work_reviews"] = [k for k in lst if k in live][-300:]
+        store.save_state(self.state)
         return self._build_view()
 
     # ---- CTO context: launches + vision (context.json, CTO-owned) -------
@@ -825,7 +844,7 @@ def _make_handler(api: "Api"):
 
     web_dir = Path(__file__).resolve().parent / "web"
     ALLOWED = {"get_view", "refresh", "tick", "rescan_local", "analyze",
-               "get_analysis", "open_terminal", "dismiss_review",
+               "get_analysis", "open_terminal", "dismiss_review", "hide_work_review",
                "get_settings", "save_settings",
                "get_context", "set_active_launch", "update_active_launch",
                "pushback_launch", "complete_launch", "save_vision"}

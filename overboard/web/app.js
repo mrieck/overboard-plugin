@@ -29,6 +29,12 @@ let VIEW = null;
 let SELECTED = null;   // selected project name
 let ANALYSES = {};     // slug -> { tab, data, error, loading } for that project's local repos
 let CONTEXT_FOR = null; // project whose right-panel context is currently rendered
+// Recent-work cards: renderReport re-runs on every 20s tick, so expansion state
+// and rendered Mermaid SVGs must live outside the DOM or cards snap shut and
+// diagrams flicker. WORK_OPEN: project -> Set of expanded unit ids (newest card
+// opens by default); WORK_MMD: unit id -> rendered SVG string.
+const WORK_OPEN = {};
+const WORK_MMD = {};
 
 function boot() {
   if (window.mermaid) {
@@ -402,12 +408,128 @@ function renderReport(proj) {
     }
   }
 
+  // Recent work — the assistant's per-sprint delta cards, newest first.
+  const units = proj.work_reviews || [];
+  if (units.length) {
+    if (!WORK_OPEN[proj.name]) WORK_OPEN[proj.name] = new Set([units[0].id]);
+    host.appendChild(sectionTitle("Recent work"));
+    for (const u of units) host.appendChild(workCard(proj, u));
+  }
+
   // Repositories — analysis for local ones is auto-loaded below.
   host.appendChild(sectionTitle("Repositories"));
   const repos = document.createElement("div");
   repos.className = "repos";
   for (const r of proj.repos) repos.appendChild(repoBadge(r));
   host.appendChild(repos);
+}
+
+// ---- recent-work cards (assistant-owned delta layer) -----------------------
+function workCard(proj, u) {
+  const open = WORK_OPEN[proj.name];
+  const card = el("div", "work-card" + (u.source === "messages" ? " msg-src" : ""));
+
+  const head = el("div", "work-head");
+  head.addEventListener("click", () => {
+    if (open.has(u.id)) open.delete(u.id);
+    else open.add(u.id);
+    render();
+  });
+  head.appendChild(el("span", "work-caret", open.has(u.id) ? "▾" : "▸"));
+  head.appendChild(el("span", "work-title", u.title || "recent work"));
+
+  const bits = [];
+  if ((u.repos || []).length) bits.push(u.repos.join(", "));
+  const per = u.period || {};
+  if (per.from || per.to) bits.push(per.from === per.to ? per.from : `${per.from || "…"} – ${per.to || "…"}`);
+  if ((u.commits || []).length) bits.push(`${u.commits.length} commit${u.commits.length === 1 ? "" : "s"}`);
+  head.appendChild(el("span", "work-meta subtle", bits.join(" · ")));
+
+  if (u.source === "messages") {
+    const b = el("span", "work-src-msg", "messages");
+    b.title = "Built from commit messages only — no local clone to diff";
+    head.appendChild(b);
+  }
+
+  const hide = el("button", "work-hide", "✕");
+  hide.title = "Hide this card — I've reviewed it";
+  hide.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    hide.disabled = true;
+    const v = await callView("hide_work_review", { project: proj.name, id: u.id });
+    if (v) { VIEW = v; render(); }
+    else { hide.disabled = false; hide.title = "Couldn't hide — restart the dashboard server"; }
+  });
+  head.appendChild(hide);
+  card.appendChild(head);
+
+  if (!open.has(u.id)) return card;
+
+  const body = el("div", "work-body");
+  if (u.summary) body.appendChild(el("p", "work-summary", u.summary));
+
+  if ((u.decisions || []).length) {
+    body.appendChild(sectionTitle("Decisions & assumptions"));
+    const ul = el("ul", "work-decisions");
+    for (const d of u.decisions) {
+      const li = document.createElement("li");
+      li.appendChild(el("span", "", d.text || ""));
+      if (d.file) li.appendChild(el("span", "loc", d.line ? `${d.file}:${d.line}` : d.file));
+      ul.appendChild(li);
+    }
+    body.appendChild(ul);
+  }
+
+  if ((u.surface || []).length) {
+    body.appendChild(sectionTitle("Now exists"));
+    const byKind = {};
+    for (const s of u.surface) {
+      const k = s.kind || "other";
+      (byKind[k] = byKind[k] || []).push(s);
+    }
+    for (const [kind, items] of Object.entries(byKind)) {
+      const row = el("div", "work-surface");
+      row.appendChild(el("span", "work-kind", kind));
+      const kv = el("div", "kv");
+      for (const s of items) {
+        const p = pill(s.name + (s.detail ? " — " + s.detail : ""));
+        if (s.file) p.title = s.line ? `${s.file}:${s.line}` : s.file;
+        kv.appendChild(p);
+      }
+      row.appendChild(kv);
+      body.appendChild(row);
+    }
+  }
+
+  if ((u.snippets || []).length) {
+    body.appendChild(sectionTitle("Key new code"));
+    for (const s of u.snippets) body.appendChild(snippetEl(s));
+  }
+
+  if (u.mermaid) {
+    body.appendChild(sectionTitle("Flow"));
+    renderWorkMermaid(body, u.id, u.mermaid);
+  }
+  card.appendChild(body);
+  return card;
+}
+
+// Like renderMermaid, but caches the rendered SVG per unit id — renderReport
+// re-runs on every tick and a fresh async render each time made diagrams flicker.
+async function renderWorkMermaid(host, unitId, code) {
+  const wrap = el("div", "mermaid-out");
+  host.appendChild(wrap);
+  if (WORK_MMD[unitId]) { wrap.innerHTML = WORK_MMD[unitId]; return; }
+  if (!code || !window.mermaid) { wrap.remove(); return; }
+  try {
+    const id = "mmd-" + Math.random().toString(36).slice(2);
+    const { svg } = await mermaid.render(id, code);
+    WORK_MMD[unitId] = svg;
+    wrap.innerHTML = svg;
+  } catch (e) {
+    wrap.className = "subtle";
+    wrap.textContent = "diagram unavailable: " + (e && e.message ? e.message : e);
+  }
 }
 
 // The activity modal is project-scoped, so labels drop the repo suffix and
@@ -889,37 +1011,41 @@ function snippetsTab(d) {
       : "Run /overboard — your assistant will surface a few key code snippets."));
     return frag;
   }
-  for (const s of items) {
-    const el = document.createElement("div");
-    el.className = "finding";
-    const meta = document.createElement("div");
-    meta.className = "meta";
-
-    const kind = document.createElement("span");
-    kind.className = "kind";
-    kind.textContent = s.title || "snippet";
-    meta.appendChild(kind);
-
-    if (s.file) {
-      const loc = document.createElement("span");
-      loc.className = "loc";
-      loc.textContent = s.line ? `${s.file}:${s.line}` : s.file;
-      meta.appendChild(loc);
-    }
-    el.appendChild(meta);
-
-    const code = document.createElement("code");
-    code.textContent = s.code || "";
-    el.appendChild(code);
-    if (s.note) {
-      const nt = document.createElement("div");
-      nt.className = "finding-note subtle";
-      nt.textContent = s.note;
-      el.appendChild(nt);
-    }
-    frag.appendChild(el);
-  }
+  for (const s of items) frag.appendChild(snippetEl(s));
   return frag;
+}
+
+// One code-snippet block ({title, file, line, code, note}) — shared by the
+// Snippets analysis tab and the recent-work cards.
+function snippetEl(s) {
+  const box = document.createElement("div");
+  box.className = "finding";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+
+  const kind = document.createElement("span");
+  kind.className = "kind";
+  kind.textContent = s.title || "snippet";
+  meta.appendChild(kind);
+
+  if (s.file) {
+    const loc = document.createElement("span");
+    loc.className = "loc";
+    loc.textContent = s.line ? `${s.file}:${s.line}` : s.file;
+    meta.appendChild(loc);
+  }
+  box.appendChild(meta);
+
+  const code = document.createElement("code");
+  code.textContent = s.code || "";
+  box.appendChild(code);
+  if (s.note) {
+    const nt = document.createElement("div");
+    nt.className = "finding-note subtle";
+    nt.textContent = s.note;
+    box.appendChild(nt);
+  }
+  return box;
 }
 
 function dbTab(d) {

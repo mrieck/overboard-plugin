@@ -51,9 +51,11 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
 
 ## No write races (files under `~/.cache/overboard/`)
 
-- `state.json` — **dashboard-owned** (commits, analysis, local links, activity).
+- `state.json` — **dashboard-owned** (commits, analysis, local links, activity,
+  plus the user's dismissals: `dismissed_reviews` and `hidden_work_reviews`).
   The MCP server never writes it.
-- `ai.json` — **assistant-owned** (summaries, digests, architecture). Written only
+- `ai.json` — **assistant-owned** (summaries, digests, architecture, and
+  `work_reviews` — the per-sprint "recent work" cards). Written only
   via the `set_*`/`record_*` MCP tools; the dashboard reads but never writes it.
 - `context.json` — **CTO-owned** (per-project launch/milestone + vision). Written
   only by the dashboard's `Api` (get_context/set_active_launch/update_active_launch/
@@ -77,7 +79,11 @@ concurrently (the `state.json.tmp` error).
   assistant has flagged items. Clicking a row selects the project.
 - **Right panel**: the selected project's full detail. Top row = **summary on the
   left, 30-day commit grid on the right**. Below: the assistant's report
-  (narrative + review flags), recent activity from the team, the repositories,
+  (narrative + review flags), **Recent work** cards (the assistant's per-sprint
+  delta layer — newest-first, expandable, hide with ✕; `need_review` in
+  `get_pending_work` drives them, the `work-reviewer` subagent extracts from real
+  git diffs, `record_work_review` persists, `hidden_work_reviews` in state.json
+  remembers hides), recent activity from the team, the repositories,
   and — **always shown, no button** — each local repo's analysis (Overview /
   Prompts / Data shape).
 
@@ -93,7 +99,8 @@ on Refresh).
 it false-positives badly (it even flags its own regexes). The real content comes
 from the `/overboard` assistant, which delegates per-repo extraction to the
 **`repo-analyst` subagent** (`agents/repo-analyst.md`, pinned to Sonnet, read-only,
-returns JSON) and persists it via the MCP tools `set_prompts` / `set_setup` /
+returns JSON; its sibling **`work-reviewer`** does the same for recent-diff review
+cards) and persists it via the MCP tools `set_prompts` / `set_setup` /
 `set_snippets` / `set_architecture` into `ai.json`. `Api._overlay_ai` layers those
 over the static result at read time: agent prompts *replace* the static ones (and
 `prompts_source` flips `static`→`agent`; the UI dims static guesses), and setup /

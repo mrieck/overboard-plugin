@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from datetime import date, datetime, timezone
 
 # Make the plugin's `overboard` package importable no matter the cwd or how
@@ -155,6 +156,91 @@ def record_digest(project: str, narrative: str, review=None):
     }
     store.save_ai(ai)
     return f"digest recorded for {project}"
+
+
+_WORK_KINDS = {"model", "endpoint", "mcp-tool", "command", "config", "other"}
+
+
+def record_work_review(project: str, units=None, reviewed_heads=None):
+    state = store.load_state()
+    p = state.get("projects", {}).get(project)
+    if not p:
+        return f"unknown project {project!r} (see get_pending_work)"
+    slugs = set(p.get("repos", {}))
+
+    clean = []
+    for u in (units or [])[:3]:
+        if not isinstance(u, dict):
+            continue
+        decisions = []
+        for d in (u.get("decisions") or []):
+            if not isinstance(d, dict) or not str(d.get("text", "")).strip():
+                continue
+            line = d.get("line")
+            decisions.append({
+                "text": str(d.get("text", "")).strip()[:300],
+                "file": str(d.get("file", ""))[:300],
+                "line": line if isinstance(line, int) else None,
+            })
+        surface = []
+        for s in (u.get("surface") or []):
+            if not isinstance(s, dict) or not str(s.get("name", "")).strip():
+                continue
+            kind = str(s.get("kind", "")).strip().lower()
+            line = s.get("line")
+            surface.append({
+                "kind": kind if kind in _WORK_KINDS else "other",
+                "name": str(s.get("name", "")).strip()[:120],
+                "detail": str(s.get("detail", ""))[:300],
+                "file": str(s.get("file", ""))[:300],
+                "line": line if isinstance(line, int) else None,
+            })
+        snippets = []
+        for sn in (u.get("snippets") or []):
+            if not isinstance(sn, dict):
+                continue
+            line = sn.get("line")
+            snippets.append({
+                "title": str(sn.get("title", ""))[:160],
+                "file": str(sn.get("file", ""))[:300],
+                "line": line if isinstance(line, int) else None,
+                "code": str(sn.get("code", ""))[:2000],
+                "note": str(sn.get("note", ""))[:400],
+            })
+        period = u.get("period") if isinstance(u.get("period"), dict) else {}
+        clean.append({
+            # Server-assigned id — the dashboard's hide (✕) keys off it, so it
+            # must be unique and survive title edits.
+            "id": uuid.uuid4().hex[:12],
+            "title": str(u.get("title", "")).strip()[:120],
+            "summary": str(u.get("summary", "")).strip()[:700],
+            "repos": [str(s) for s in (u.get("repos") or []) if str(s) in slugs][:10],
+            "source": "messages" if u.get("source") == "messages" else "diffs",
+            "period": {"from": str(period.get("from", ""))[:32],
+                       "to": str(period.get("to", ""))[:32]},
+            "commits": [str(c)[:12] for c in (u.get("commits") or [])][:40],
+            "decisions": decisions[:8],
+            "surface": surface[:20],
+            "snippets": snippets[:5],
+            "mermaid": str(u.get("mermaid") or "").strip()[:4000],
+            "at": _now_iso(),
+        })
+
+    # The basis records what was ACTUALLY reviewed: provider heads by default,
+    # overridden by reviewed_heads (the clone's local HEAD the subagent diffed).
+    # A clone behind the remote leaves need_review true and self-heals on pull.
+    heads = {s: r.get("head") for s, r in p.get("repos", {}).items() if r.get("head")}
+    if isinstance(reviewed_heads, dict):
+        heads.update({str(s): str(h) for s, h in reviewed_heads.items()
+                      if str(s) in slugs and h})
+
+    ai = store.load_ai()
+    entry = ai.setdefault("work_reviews", {}).setdefault(project, {})
+    entry["items"] = (clean + list(entry.get("items", [])))[:12]
+    entry["basis"] = {"stop_ts": _newest_stop_ts(state, project), "heads": heads}
+    entry["at"] = _now_iso()
+    store.save_ai(ai)
+    return f"{len(clean)} work unit(s) recorded for {project}"
 
 
 def set_architecture(slug: str, text: str, mermaid: str = ""):
@@ -318,7 +404,7 @@ _S = {"type": "string"}
 _I = {"type": "integer"}
 _OBJ_ARR = {"type": "array", "items": {"type": "object"}}
 TOOLS = [
-    ("get_pending_work", "Your to-do list. Each entry is a project needing attention, with need_summary (commits changed) and/or need_digest (new finished work) plus its repo slugs. May also include a grouping item {kind:'grouping', need_grouping:true, all_repos:[...], ungrouped:[...]} — handle it FIRST by calling set_grouping so projects are named right. Start every update pass here; if empty, nothing to do.", {}, [], get_pending_work),
+    ("get_pending_work", "Your to-do list. Each entry is a project needing attention, with need_summary (commits changed), need_digest (new finished work), and/or need_review (work landed since the last recent-work review — see record_work_review; review_since maps each repo slug to the last-reviewed hash or null, and recent_review_titles lists prior card titles for theme-name consistency), plus its repo slugs. Entries carry `launch` {type, title, target_date, days_until} when the CTO has an active launch — use it to ground your prose; call get_project_context only when you need the full plan (goals, push-back history, vision). May also include a grouping item {kind:'grouping', need_grouping:true, all_repos:[...], ungrouped:[...]} — handle it FIRST by calling set_grouping so projects are named right. Start every update pass here; if empty, nothing to do.", {}, [], get_pending_work),
     ("list_projects", "Repo slugs Overboard tracks on this machine + local paths. Use the slug for get_repo_analysis / get_commits / set_architecture.", {}, [], list_projects),
     ("get_commits", "Recent Bitbucket commits for a repo (includes work pushed from other machines). Basis for a commit-status summary.", {"slug": _S, "limit": _I}, ["slug"], get_commits),
     ("get_repo_analysis", "Static analysis of a repo's local clone: prompts, DB-schema shape, file structure, and manifest_digest (turn it into an architecture write-up via set_architecture). No AI is run — that's your job.", {"slug": _S}, ["slug"], get_repo_analysis),
@@ -326,6 +412,7 @@ TOOLS = [
     ("get_project_context", "The CTO's plans for a project (READ-ONLY, CTO-owned): active launch/milestone (type, title, action, target_date, days_until, goals, push-back history), past launches, and the vision/direction text. Use it to sharpen summaries and to flag when a launch is near and its goals look unmet, or the plan has slipped.", {"project": _S}, ["project"], get_project_context),
     ("set_project_summary", "Set a project's commit-status summary (1-2 sentences: what was worked on and where it stands). project is a group name from get_pending_work.", {"project": _S, "text": _S}, ["project", "text"], set_project_summary),
     ("record_digest", "Record the live status digest: narrative (one sentence: what the team is doing now) and review (0-4 items the CTO must ACT ON, gotchas in how it works, or assumptions the Claude made — NOT a summary of features built, which the CTO already knows). Call after reading the project's new events.", {"project": _S, "narrative": _S, "review": {"type": "array", "items": _S}}, ["project", "narrative"], record_digest),
+    ("record_work_review", "Record 1-3 'recent work' cards for a project — the delta layer shown newest-first on the dashboard (what just landed, vs the snapshot panels). Each unit: {title, summary, repos:[slug], source ('diffs' when built from real local git diffs, 'messages' when only commit messages were available), period:{from,to}, commits:[short-hash], decisions:[{text,file,line}] (choices/assumptions baked in), surface:[{kind: model|endpoint|mcp-tool|command|config|other, name, detail, file, line}] (new core surface), snippets:[{title,file,line,code,note}] (key NEW code), mermaid (optional flow)}. Ids are server-assigned. reviewed_heads: {slug: full-hash} — the clone HEAD each diff actually ran against (defaults to provider heads); pass it so a stale clone re-fires need_review until pulled. units=[] is legal and just advances the basis (stops fired but nothing material changed) so need_review clears.", {"project": _S, "units": _OBJ_ARR, "reviewed_heads": {"type": "object"}}, ["project"], record_work_review),
     ("set_architecture", "Set a repo's architecture write-up (2-4 sentences) and optionally a Mermaid flowchart string. slug is a repo slug from list_projects.", {"slug": _S, "text": _S, "mermaid": _S}, ["slug", "text"], set_architecture),
     ("set_prompts", "Set a repo's REAL LLM prompts (this replaces the noisy static keyword scan). items: list of {name, text, file, line, dynamic (true if built at runtime — then text is the code that assembles it), note}. Read the actual clone to find genuine system prompts / templates.", {"slug": _S, "items": _OBJ_ARR}, ["slug", "items"], set_prompts),
     ("set_setup", "Set a repo's setup/run instructions (how to install and run it), shown as a dashboard panel. Plain text / simple markdown, grounded in the README + manifests + entrypoints.", {"slug": _S, "text": _S}, ["slug", "text"], set_setup),

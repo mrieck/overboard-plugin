@@ -35,10 +35,15 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
    - If **`need_digest`**: `get_project_events(project)` to read what the team
      just finished, then **`record_digest(project, narrative, review)`** — see
      *Writing digests*.
+   - If **`need_review`**: build 1–3 "recent work" cards from the real diffs and
+     **`record_work_review(project, units, reviewed_heads)`** — see *Reviewing
+     recent work* below.
    - **Refresh the dashboard panels** for each *local* repo (see *Maintaining
      the panels* below) — real prompts, setup/run, snippets, architecture.
-   - **Read the CTO's plans** with `get_project_context(project)` (see *Launch &
-     vision* below) and let them shape what you write and flag.
+   - **Mind the CTO's plans**: each pending entry already carries `launch`
+     (type, title, days_until) — let it shape what you write and flag. Call
+     `get_project_context(project)` only when you need the full plan — goals,
+     push-back history, or the vision text (see *Launch & vision* below).
 4. **Flags are signal, not a changelog.** Use **`flag_for_review(project, note)`**
    ONLY for things the CTO must know or act on:
    - **Needs human action** — something the finished-work (stop) message says the
@@ -100,6 +105,36 @@ Skip a repo whose clone HEAD hasn't moved since you last refreshed it — the
 pending-work gate already keeps this to active repos, so most passes touch one or
 two repos, not ten.
 
+## Reviewing recent work (`record_work_review`)
+
+The snapshot panels answer "what is this project" — the **Recent work cards**
+answer "what just landed, and do I agree with it". When a pending entry has
+`need_review`:
+
+1. The entry's **`review_since`** maps each repo slug to the last-reviewed
+   commit hash (or `null` for a first-ever review), and
+   **`recent_review_titles`** lists the last few card titles — reuse their
+   naming style for continuing themes.
+2. For each repo **with a local clone** (`list_projects` paths), spawn the
+   **`work-reviewer`** subagent (via the Task tool) with the slug, path, its
+   `review_since` hash (or `none`), and branch. It reads the real git diffs and
+   returns `{reviewed_head, suggested_units}` — decisions, new surface,
+   snippets. It never fetches or pulls.
+3. For repos **without a clone**, build a shallower unit yourself from
+   `get_commits(slug)` with `source: "messages"` — commit messages only, no
+   snippets expected. Also fall back to this for a clone that stays stale
+   (never pulled) so its card doesn't block forever.
+4. **Cluster across repos into 1–3 themes** for the project (an app's `-api` +
+   `-web` work on one feature is ONE unit), then call
+   **`record_work_review(project, units, reviewed_heads)`** — pass each
+   subagent's `reviewed_head` so a behind-the-remote clone self-heals.
+5. If the diffs turn out to be empty/immaterial, call it with **`units=[]`** —
+   that advances the basis so `need_review` clears without adding a card.
+
+The bar for `decisions` is the flag bar: choices/assumptions the CTO might veto,
+not a changelog. The CTO hides cards with ✕ when reviewed — don't re-record a
+unit they've hidden.
+
 ## Launch & vision (read the CTO's plans)
 
 `get_project_context(project)` returns what the CTO wrote about where a project is
@@ -158,6 +193,12 @@ For "what's happening / what needs my review", read pending work + recent events
 group by project, and lead with the outcome per project, then the 1–3 things that
 need attention. Short, direct, outcome-first — the CTO runs many projects at
 once. If a project is quiet, say so; never invent activity.
+
+Also read `get_project_context(project)` for each project and weave in the active
+launch — its type/title and `days_until` (e.g. "MVP 'Checkout' in 6 days"). This
+is the one place a **quiet** project's deadline surfaces (the update loop only
+sees active projects), so a near or overdue launch on a silent project is exactly
+the thing to call out. No launch set → say nothing about it.
 
 ## Where the data lives
 

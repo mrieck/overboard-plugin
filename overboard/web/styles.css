@@ -322,6 +322,45 @@ body.context-collapsed #context .context-head { justify-content: center; padding
 .badge .sync.ahead { color: var(--amber); }
 .badge .sync.behind { color: var(--red); }
 
+/* ---- recent-work cards (assistant delta layer) ----------------------------- */
+.work-card {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); margin-top: 10px; overflow: hidden;
+}
+.work-card.msg-src { opacity: 0.85; }
+.work-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; cursor: pointer;
+}
+.work-head:hover { background: var(--panel-2); }
+.work-caret { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.work-title { font-weight: 600; font-size: 13px; white-space: nowrap; }
+.work-meta {
+  font-size: 11px; flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.work-src-msg {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  padding: 1px 4px; border-radius: 4px; flex-shrink: 0;
+  background: #3a2f16; color: var(--amber);
+}
+.work-hide {
+  flex-shrink: 0; background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 12px; padding: 0 2px; line-height: 1;
+}
+.work-hide:hover { color: var(--red); }
+.work-hide:disabled { opacity: 0.5; cursor: default; }
+.work-body { padding: 2px 14px 12px; border-top: 1px solid var(--border); }
+.work-summary { margin: 10px 0 4px; line-height: 1.55; }
+.work-decisions { margin: 2px 0 4px; padding-left: 18px; }
+.work-decisions li { font-size: 12.5px; margin: 3px 0; }
+.work-decisions .loc { color: var(--muted); font-size: 11px; margin-left: 8px; }
+.work-surface { margin: 4px 0; }
+.work-kind {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--accent); font-weight: 700;
+}
+
 /* ---- repo analysis (in-panel) --------------------------------------------- */
 #detail-analysis { margin-top: 8px; }
 .analysis {
