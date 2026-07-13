@@ -209,7 +209,11 @@ function projectRow(proj) {
 
   const name = document.createElement("div");
   name.className = "prow-name";
-  name.textContent = proj.name;
+  name.textContent = proj.display || proj.name;
+  if (proj.grouping_source !== "agent") {
+    name.classList.add("dim");
+    name.title = "Auto-grouped by name — the assistant will confirm the grouping and name";
+  }
   main.appendChild(name);
 
   const meta = document.createElement("div");
@@ -330,7 +334,7 @@ function renderReport(proj) {
   const main = document.createElement("div");
   main.className = "rep-top-main";
   const h = document.createElement("h2");
-  h.textContent = proj.name;
+  h.textContent = proj.display || proj.name;
   h.appendChild(chip(proj));
   if (proj.activity && proj.activity.length) {
     const ab = document.createElement("button");
@@ -444,7 +448,7 @@ function openActivityModal(proj) {
   const head = document.createElement("div");
   head.className = "modal-head";
   const h = document.createElement("h3");
-  h.textContent = `Recent activity · ${proj.name}`;
+  h.textContent = `Recent activity · ${proj.display || proj.name}`;
   const close = document.createElement("button");
   close.className = "btn ghost small";
   close.textContent = "Close";
@@ -520,6 +524,11 @@ function renderSettingsModal(s) {
         '<label>Personal access token <input type="password" id="gh-token"></label>' +
         '<p class="subtle hint">Classic PAT with <code>repo</code> scope (or fine-grained: repository contents + metadata, read). Pulls the repos you own.</p>' +
       '</fieldset>' +
+      '<fieldset class="src">' +
+        '<legend>Local folders</legend>' +
+        '<label>Where your clones live <input type="text" id="local-roots" placeholder="~/Sites, ~/dev/work"></label>' +
+        '<p class="subtle hint">Comma-separated. Common folders (~/Sites, ~/projects, ~/code, …) are searched automatically — add any others here so local analysis finds your repos.</p>' +
+      '</fieldset>' +
       '<div class="settings-actions"><span id="settings-status" class="subtle"></span>' +
       '<button class="btn" data-save>Save &amp; refresh</button></div>' +
     '</div>';
@@ -532,6 +541,7 @@ function renderSettingsModal(s) {
   box.querySelector("#bb-token").placeholder = s.bitbucket.token_set ? "•••• saved — blank keeps it" : "paste token";
   box.querySelector("#gh-enabled").checked = s.github.enabled;
   box.querySelector("#gh-token").placeholder = s.github.token_set ? "•••• saved — blank keeps it" : "paste token";
+  box.querySelector("#local-roots").value = (s.local_roots || []).join(", ");
 
   box.querySelector("[data-close]").addEventListener("click", closeSettings);
   box.querySelector("[data-save]").addEventListener("click", () => saveSettings(box));
@@ -561,6 +571,7 @@ async function saveSettings(box) {
       enabled: box.querySelector("#gh-enabled").checked,
       token: box.querySelector("#gh-token").value,
     },
+    local_roots: box.querySelector("#local-roots").value.split(",").map((r) => r.trim()).filter(Boolean),
   };
   const v = await callView("save_settings", payload);
   if (v) {
@@ -894,10 +905,19 @@ function snippetsTab(d) {
 
 function dbTab(d) {
   const frag = document.createElement("div");
+  const isStatic = d.data_shape_source !== "agent";
   if (!d.db.length) {
-    frag.appendChild(note("No SQL tables or ORM models detected."));
+    frag.appendChild(note(VIEW.agent_has_run
+      ? "No data model found in this repo."
+      : "Run /overboard — your assistant reads the code and extracts the data model for any stack (SQL, Mongo, JPA, EF, ORMs). The static scan only knows SQL/Prisma/Django, so it may miss yours."));
     return frag;
   }
+  const banner = document.createElement("p");
+  banner.className = "subtle prompts-src";
+  banner.textContent = isStatic
+    ? "⚠ Static scan — only detects SQL/Prisma/Django. Run /overboard for the real data model (any stack)."
+    : "Extracted by your assistant from the actual code.";
+  frag.appendChild(banner);
   const er = d.diagrams && d.diagrams.er;
   if (er) {
     frag.appendChild(sectionTitle("Entity relationships"));
@@ -906,7 +926,7 @@ function dbTab(d) {
   }
   for (const t of d.db) {
     const el = document.createElement("div");
-    el.className = "table-card";
+    el.className = "table-card" + (isStatic ? " dim" : "");
     const h = document.createElement("h4");
     h.textContent = t.name;
     const src = document.createElement("span");

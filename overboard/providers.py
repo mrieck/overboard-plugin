@@ -44,6 +44,9 @@ def active_repos(source: dict, session, cutoff: "datetime") -> list[dict]:
             "provider": p,
             "workspace": r.get("workspace") or source.get("workspace") or "",
             "slug": r["slug"],
+            # The provider reports the repo's real default branch (GitHub
+            # default_branch / Bitbucket mainbranch), so master/develop/trunk are
+            # honored; "main" is only a last resort if the API omits it entirely.
             "branch": r.get("branch") or "main",
             "updated_on": r.get("updated_on", ""),
         }

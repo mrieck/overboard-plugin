@@ -25,7 +25,11 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
 1. **`get_pending_work()`** — your to-do list. Each entry has `project`, its repo
    `repos` (slugs), and `need_summary` / `need_digest`. **If it's empty, stop —
    nothing changed, don't spend a turn.**
-2. For each pending project:
+2. **Grouping first.** If the list includes a `{kind:"grouping", need_grouping:true,
+   all_repos, ungrouped}` item, decide how the repos cluster into real products and
+   call **`set_grouping(groups)`** before anything else — see *Grouping* below. Until
+   you do, the sidebar shows a dimmed prefix-of-the-name guess.
+3. For each pending project:
    - If **`need_summary`**: `get_commits(slug)` for its repo(s), then
      **`set_project_summary(project, text)`** — see *Writing summaries* below.
    - If **`need_digest`**: `get_project_events(project)` to read what the team
@@ -35,7 +39,7 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
      the panels* below) — real prompts, setup/run, snippets, architecture.
    - **Read the CTO's plans** with `get_project_context(project)` (see *Launch &
      vision* below) and let them shape what you write and flag.
-3. **Flags are signal, not a changelog.** Use **`flag_for_review(project, note)`**
+4. **Flags are signal, not a changelog.** Use **`flag_for_review(project, note)`**
    ONLY for things the CTO must know or act on:
    - **Needs human action** — something the finished-work (stop) message says the
      human has to do: restart a service, add an API key/secret, run a migration,
@@ -49,13 +53,35 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
 Then you're done until the next pass. Under `/loop`, only act when
 `get_pending_work` returns something — idle projects should cost nothing.
 
+## Grouping (name the projects)
+
+The sidebar groups repos into projects and shows each project's name. **You decide
+both** — the built-in split-on-first-hyphen guess (e.g. `drama-drill` → "drama") is
+only a dim fallback. When `get_pending_work` returns a grouping item, look at
+`all_repos` (every tracked slug) and call **`set_grouping(groups)`** with one group
+per real product:
+
+- Each group is `{key, display, repos:[slug]}`.
+- **`key` is a stable identity** — pick a short slug-safe id and **reuse it forever**.
+  Never rename a key: summaries, digests, and the CTO's launch/vision all hang off it,
+  so renaming a key orphans them. To rename a project the human sees, change **`display`
+  only** (that's free — zero churn).
+- **`display`** is the human name shown in the sidebar (e.g. "Drama Drill").
+- **Cover every slug** in `all_repos`. Group repos that are one product (an app's
+  `-api` + `-ios` + `-web`); keep unrelated repos separate. Use repo names, and
+  `get_repo_analysis(slug)` if a slug is unfamiliar, to judge what belongs together.
+- Grouping is idempotent and takes effect on the **next refresh**. On a re-group,
+  reuse existing keys for projects that still exist; only add/remove/move members and
+  edit displays.
+
 ## Maintaining the panels (delegate to a subagent)
 
-The dashboard's Prompts / Setup & run / Snippets / Architecture panels are
-**yours** — the built-in static scanner is a noisy keyword-matcher kept only as a
-dim fallback, so replace it with real analysis. Because reading a whole repo is
-bulky, **delegate it to the `repo-analyst` subagent** (it's pinned to a cheaper
-model) rather than reading everything yourself:
+The dashboard's Prompts / Setup & run / Snippets / Architecture / Data-shape panels
+are **yours** — the built-in static scanner is a noisy keyword-matcher (and only
+knows SQL/Prisma/Django for data), kept only as a dim fallback, so replace it with
+real analysis. Because reading a whole repo is bulky, **delegate it to the
+`repo-analyst` subagent** (it's pinned to a cheaper model) rather than reading
+everything yourself:
 
 1. Only for projects `get_pending_work` returned (i.e. worked on recently) —
    never scan all projects at once.
@@ -63,12 +89,12 @@ model) rather than reading everything yourself:
    clone on this machine).
 3. Spawn the **`repo-analyst`** subagent (via the Task tool) once per local repo,
    giving it the `slug` and `path`. It reads the clone and returns a JSON object
-   with `prompts`, `setup`, `snippets`, `architecture`, `mermaid` — it does not
-   write anything itself.
+   with `prompts`, `setup`, `snippets`, `architecture`, `mermaid`, and `data_shape`
+   — it does not write anything itself.
 4. Persist its findings with the write tools:
    **`set_prompts(slug, items)`**, **`set_setup(slug, text)`**,
-   **`set_snippets(slug, items)`**, **`set_architecture(slug, text, mermaid)`**.
-   Pass through only non-empty results.
+   **`set_snippets(slug, items)`**, **`set_architecture(slug, text, mermaid)`**,
+   **`set_data_shape(slug, items)`**. Pass through only non-empty results.
 
 Skip a repo whose clone HEAD hasn't moved since you last refreshed it — the
 pending-work gate already keeps this to active repos, so most passes touch one or

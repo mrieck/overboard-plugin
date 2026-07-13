@@ -1,5 +1,6 @@
 """Config, .env, and state-cache load/save. No GTK imports here."""
 
+import hashlib
 import json
 import os
 import tempfile
@@ -26,6 +27,12 @@ SCHEMA_VERSION = 3
 
 class ConfigError(Exception):
     pass
+
+
+def slug_signature(slugs) -> str:
+    """Stable fingerprint of a set of repo slugs — so grouping/discovery caches
+    can tell when the live repo set actually changed. Order-independent."""
+    return hashlib.sha1("\n".join(sorted(slugs)).encode()).hexdigest()
 
 
 def _parse_env(path: Path) -> dict:
@@ -204,6 +211,15 @@ def fresh_ai() -> dict:
         "prompts": {},
         "setup": {},
         "snippets": {},
+        # AI-decided data shape per repo slug (universal across stacks: SQL tables,
+        # Mongo collections, JPA/EF entities, ORM models). Overlays the static
+        # scanner. { slug: {"items": [...], "at": iso} }
+        "data_shape": {},
+        # AI-decided project grouping. The assistant owns how repos cluster into
+        # projects AND each project's display name — replacing the prefix-stem
+        # heuristic. { "signature": <slug_signature of the full live set>,
+        #   "groups": { key: {"display": str, "repos": [slug, ...]} }, "at": iso }
+        "grouping": {"signature": "", "groups": {}, "at": ""},
     }
 
 

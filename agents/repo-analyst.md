@@ -1,6 +1,6 @@
 ---
 name: repo-analyst
-description: Reads one local repo clone and extracts, for the Overboard dashboard, the project's REAL LLM prompts, setup/run instructions, a few key code snippets, and a short architecture summary. Read-only — it returns structured JSON findings; it does not write anything or call MCP tools. Spawned by the Overboard cto-assistant for recently-active projects.
+description: Reads one local repo clone and extracts, for the Overboard dashboard, the project's REAL LLM prompts, setup/run instructions, a few key code snippets, a short architecture summary, and the data model (any stack). Read-only — it returns structured JSON findings; it does not write anything or call MCP tools. Spawned by the Overboard cto-assistant for recently-active projects.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -32,9 +32,13 @@ invent.
      "sent as the system prompt for the review step").
 
 2. **setup** — a concise **install & run** guide as plain text / simple
-   markdown, grounded in the README, manifests (package.json, pyproject.toml,
-   requirements.txt, Makefile, Dockerfile), entrypoints, and `.env.example`.
-   Include the real commands and any required env vars. A few lines is ideal.
+   markdown, grounded in the README, the manifest for **whatever stack this is**,
+   entrypoints, and `.env.example`. Detect the stack from its real manifest —
+   e.g. `package.json` (npm/yarn/pnpm), `pyproject.toml`/`requirements.txt` (pip/
+   poetry/uv), `pom.xml`/`build.gradle(.kts)` (Maven/Gradle), `*.csproj`/`*.sln`
+   (`dotnet`), `go.mod` (`go`), `Cargo.toml` (`cargo`), `composer.json`
+   (Composer), `Gemfile` (Bundler), `Makefile`/`Dockerfile`. Give the real
+   commands for THAT toolchain and any required env vars. A few lines is ideal.
 
 3. **snippets** — 2–5 **key code excerpts** a human could eyeball to understand
    the repo (the entrypoint, the core handler, a gnarly/important bit). Each:
@@ -42,8 +46,21 @@ invent.
    lines).
 
 4. **architecture** — 2–4 concrete sentences on what the project is, how it's
-   organized, and its stack. Optionally a Mermaid `flowchart` string in
-   `mermaid` (omit if you're not confident).
+   organized, and its stack. **Name the language/framework explicitly** (e.g.
+   "a Spring Boot service", "an ASP.NET Core API", "a Kotlin/Android app", "a Rails
+   monolith") so it doesn't read as a generic directory tree. Optionally a Mermaid
+   `flowchart` string in `mermaid` (omit if you're not confident).
+
+5. **data_shape** — the project's persistent **data model**, regardless of stack.
+   The static scanner only knows SQL/Prisma/Django, so this is where you make it
+   universal. Detect models/tables/collections wherever they live: SQL DDL
+   (`CREATE TABLE`), Prisma, Django/SQLAlchemy, **JPA/Hibernate `@Entity`/`@Table`,
+   .NET Entity Framework `DbContext`/model classes, Mongoose/Mongo collections,
+   GORM structs, ActiveRecord models, Diesel/SQLx**, or any NoSQL document shape.
+   Each item: `{name, kind, fields, file, line, note}` — `kind` is one of
+   table/collection/entity/model/type; `fields` is a list of `"name: type"` strings
+   (a few of the important ones, not every column). Empty if the repo has no
+   persistent data model.
 
 ## Output
 
@@ -56,7 +73,8 @@ End your turn with ONLY a fenced ```json block containing:
   "setup": "npm install\ncp .env.example .env  # needs STRIPE_KEY\nnpm run dev  -> localhost:3000",
   "snippets": [{"title": "server entry", "file": "src/main.ts", "line": 1, "code": "...", "note": ""}],
   "architecture": "Two-sentence summary…",
-  "mermaid": ""
+  "mermaid": "",
+  "data_shape": [{"name": "User", "kind": "entity", "fields": ["id: UUID", "email: String"], "file": "src/main/java/User.java", "line": 8, "note": ""}]
 }
 ```
 

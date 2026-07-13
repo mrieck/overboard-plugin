@@ -19,7 +19,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from overboard import analysis, localrepo, manager, providers, store
+from overboard import analysis, diagram, localrepo, manager, providers, store
 
 APP_TITLE = "Overboard"
 ICON_NORMAL = "applications-development"
@@ -54,8 +54,9 @@ def _updated_at(repo: dict) -> datetime:
     return _parse_date(repo.get("updated_on", "")) or _EPOCH
 
 
-def _slug_signature(slugs: list[str]) -> str:
-    return hashlib.sha1("\n".join(sorted(slugs)).encode()).hexdigest()
+# Moved to store.slug_signature so mcp_server/manager can compute it without
+# importing the heavy app module. Kept as a local alias for existing call sites.
+_slug_signature = store.slug_signature
 
 
 def _days_until(date_str: str):
@@ -118,36 +119,90 @@ def _gather_active_repos(sources, sessions, cutoff) -> tuple[dict, list[str]]:
     return meta, errors
 
 
+def _resolve_grouping(slugs: list[str], old_state: dict) -> dict:
+    """Decide how the live repo `slugs` cluster into projects, and each project's
+    display name. AI-driven (assistant-owned ai.json), with a deterministic
+    prefix-stem fallback. Returns {key: {"display", "members", "source"}} where
+    source is "agent" (AI-decided) or "prefix" (heuristic, shown dimmed).
+
+    Three tiers:
+      1. exact  — ai.json grouping covers the whole live set → use it as-is.
+      2. partial — repos added/removed since the grouping → keep AI groups for the
+                   slugs they still cover, prefix-group only the leftovers.
+      3. bootstrap — no AI grouping yet → prefix-group everything (dimmed) until
+                     the assistant's next pass sets one.
+    An offline refresh with no ai.json falls back to the last discovery cache."""
+    live = set(slugs)
+    ai_groups = (store.load_ai().get("grouping") or {}).get("groups") or {}
+
+    eff: dict = {}
+    covered: set = set()
+    for key, entry in ai_groups.items():
+        members = [s for s in (entry.get("repos") or []) if s in live and s not in covered]
+        if not members:
+            continue
+        eff[key] = {"display": entry.get("display") or key, "members": members, "source": "agent"}
+        covered.update(members)
+
+    leftover = [s for s in slugs if s not in covered]
+    if not ai_groups and leftover:
+        # No AI grouping at all — reuse the last discovery cache if the live set is
+        # unchanged (keeps the board stable when offline), else prefix-group.
+        cache = old_state.get("discovery") or {}
+        if cache.get("signature") == store.slug_signature(slugs) and cache.get("groups"):
+            fallback = {k: [s for s in v if s in live] for k, v in cache["groups"].items()}
+        else:
+            fallback = _prefix_group(leftover)
+    else:
+        fallback = _prefix_group(leftover)
+
+    for key, members in fallback.items():
+        members = [s for s in members if s in live and s not in covered]
+        if not members:
+            continue
+        if key in eff:
+            eff[key]["members"].extend(members)
+        else:
+            eff[key] = {"display": key, "members": members, "source": "prefix"}
+        covered.update(members)
+    return eff
+
+
 def resolve_projects(config: dict, repo_meta: dict, old_state: dict) -> tuple[list[dict], dict]:
-    """Group merged repos into projects by name stem (before the first '-').
-    Deterministic — no AI. Returns (projects, discovery_cache); each project's
-    repos carry their provider/workspace/branch."""
+    """Group merged repos into projects. Grouping is AI-driven (assistant-owned
+    ai.json), with a deterministic prefix-stem fallback — see `_resolve_grouping`.
+    Returns (projects, discovery_cache); each project carries a stable `name`
+    (identity key), a human `display`, its repos, and `grouping_source`."""
     updated_of = {slug: r.get("updated_on", "") for slug, r in repo_meta.items()}
     slugs = list(repo_meta)
     signature = _slug_signature(slugs)
 
-    cache = old_state.get("discovery") or {}
-    if cache.get("signature") == signature and cache.get("groups"):
-        groups = cache["groups"]
-    else:
-        groups = _prefix_group(slugs)
+    eff = _resolve_grouping(slugs, old_state)
 
     projects = []
-    for name, members in groups.items():
-        repos_in = [dict(repo_meta[s]) for s in members if s in repo_meta]
+    for key, g in eff.items():
+        repos_in = [dict(repo_meta[s]) for s in g["members"] if s in repo_meta]
         if repos_in:
             latest = max(updated_of[r["slug"]] for r in repos_in)
-            projects.append({"name": name, "repos": repos_in, "_latest": latest})
+            projects.append({
+                "name": key,
+                "display": g["display"],
+                "grouping_source": g["source"],
+                "repos": repos_in,
+                "_latest": latest,
+            })
     projects.sort(key=lambda p: p["_latest"], reverse=True)
     for p in projects:
         del p["_latest"]
 
+    groups = {p["name"]: [r["slug"] for r in p["repos"]] for p in projects}
     return projects, {"signature": signature, "groups": groups}
 
 
 def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
     """Fetch commits across all sources (Bitbucket + GitHub), compute activity.
-    Pure function of its inputs — safe on a worker thread. Per-repo and
+    Safe on a worker thread; it only READS ai.json (for grouping) and never
+    writes it — the assistant owns ai.json, this owns state.json. Per-repo and
     per-source failures are recorded, not raised; one bad source never blanks
     another."""
     new_state = store.fresh_state()
@@ -242,6 +297,8 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
 
         head_sig = "|".join(f"{s}:{r.get('head')}" for s, r in sorted(repos_state.items()))
         new_state["projects"][name] = {
+            "display": project.get("display", name),
+            "grouping_source": project.get("grouping_source", "prefix"),
             "commits_today": commits_today,
             "days_idle": days_idle,
             "daily_counts": daily_counts,
@@ -403,6 +460,8 @@ class Api:
             ]
             projects.append({
                 "name": name,
+                "display": p.get("display") or name,
+                "grouping_source": p.get("grouping_source") or "prefix",
                 "summary": (ai_sum.get(name) or {}).get("text"),
                 "commits_today": p.get("commits_today") or 0,
                 "days_idle": p.get("days_idle"),
@@ -428,7 +487,8 @@ class Api:
     def _overlay_ai(self, slug: str, result: dict) -> dict:
         """Overlay the agent-owned panels (ai.json) onto a static analysis
         result. Architecture prose + Mermaid, real prompts (which replace the
-        noisy static guesses — those stay only as a dim fallback), setup/run
+        noisy static guesses — those stay only as a dim fallback), the universal
+        data shape (replaces the SQL/Prisma/Django-only static scan), setup/run
         instructions, and key code snippets."""
         ai = store.load_ai()
         result = dict(result)
@@ -445,6 +505,22 @@ class Api:
             result["prompts_source"] = "agent"
         else:
             result["prompts_source"] = "static"  # keyword guesses; show dimmed
+
+        ds = ai.get("data_shape", {}).get(slug) or {}
+        if ds.get("items"):
+            # Map the stack-agnostic agent items onto the shape the frontend/ER
+            # diagram already expect ({name, kind, source, columns}).
+            mapped = [{
+                "name": it.get("name", ""),
+                "kind": it.get("kind", "") or "model",
+                "source": it.get("file", "") + (f":{it['line']}" if it.get("line") else ""),
+                "columns": it.get("fields", []),
+            } for it in ds["items"]]
+            result["db"] = mapped
+            result["diagrams"] = {**result.get("diagrams", {}), "er": diagram.er_diagram(mapped)}
+            result["data_shape_source"] = "agent"
+        else:
+            result["data_shape_source"] = "static"  # SQL/Prisma/Django guesses; dimmed
 
         result["setup"] = (ai.get("setup", {}).get(slug) or {}).get("text", "")
         result["snippets"] = (ai.get("snippets", {}).get(slug) or {}).get("items", [])
@@ -512,9 +588,13 @@ class Api:
             },
             "github": {"enabled": bool(gh.get("enabled")), "token_set": bool(gh.get("token"))},
             "has_any_source": bool(self.sources),
+            # Machine-local extra folders to hunt for clones (on top of the common
+            # defaults). Shown so the user can add non-standard locations.
+            "local_roots": list(cred.get("local_roots") or []),
         }
 
-    def save_settings(self, bitbucket: dict | None = None, github: dict | None = None) -> dict:
+    def save_settings(self, bitbucket: dict | None = None, github: dict | None = None,
+                      local_roots: list | None = None) -> dict:
         """Write credentials.json (a blank token keeps the existing one),
         rebuild sources, rediscover local clones, and refresh."""
         cred = store.load_credentials()
@@ -539,9 +619,12 @@ class Api:
             tok = (github.get("token") or "").strip()
             if tok:
                 gh["token"] = tok
+        if local_roots is not None:
+            cred["local_roots"] = [str(r).strip() for r in local_roots if str(r).strip()]
         store.save_credentials(cred)
         self.sources = store.load_sources(self.config)
         try:
+            # resolved_roots reads the just-saved machine-local roots from credentials.
             localrepo.update_state_links(self.state, self.config, self.sources)
         except Exception:
             pass

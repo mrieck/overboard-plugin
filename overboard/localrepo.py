@@ -9,7 +9,13 @@ import os
 import platform
 from pathlib import Path
 
-DEFAULT_ROOTS = ["~/Sites"]
+# Common places developers keep their clones. Missing roots are skipped, and the
+# walk never descends into a repo or noise dirs, so listing several is cheap. Users
+# can override with `local_roots` in Settings / projects.json.
+DEFAULT_ROOTS = [
+    "~/Sites", "~/projects", "~/Projects", "~/dev", "~/Dev", "~/code", "~/Code",
+    "~/work", "~/Work", "~/src", "~/repos", "~/git", "~/Documents/GitHub",
+]
 
 # Map an Overboard provider to the host its clones use, so discovery can tell a
 # GitHub clone from a Bitbucket one under the same local root.
@@ -125,10 +131,27 @@ def links_for_machine(state: dict) -> dict[str, str]:
     return state.get("local_links", {}).get(machine_key(), {})
 
 
-def update_state_links(state: dict, config: dict, sources: list[dict] | None = None) -> dict[str, str]:
+def resolved_roots(config: dict | None = None, extra: list | None = None) -> list[str]:
+    """Where to hunt for clones: any user-set roots FIRST — projects.json
+    `local_roots`, the machine-local ones saved in Settings (credentials.json), and
+    any `extra` — then the common defaults, deduped and order-preserving. Missing
+    roots are skipped by `discover`, so listing several is cheap."""
+    from . import store  # lazy: store has no localrepo dependency
+    machine_local = store.load_credentials().get("local_roots") or []
+    roots: list[str] = []
+    for src in ((config or {}).get("local_roots") or [], extra or [], machine_local, DEFAULT_ROOTS):
+        for r in src:
+            r = str(r).strip()
+            if r and r not in roots:
+                roots.append(r)
+    return roots
+
+
+def update_state_links(state: dict, config: dict, sources: list[dict] | None = None,
+                       extra_roots: list | None = None) -> dict[str, str]:
     """Rescan (across all configured sources) and store the discovered map under
     this machine's key. Returns the map for this machine."""
-    roots = config.get("local_roots") or DEFAULT_ROOTS
+    roots = resolved_roots(config, extra_roots)
     links = discover(roots, _matchers_from_sources(sources or []))
     state.setdefault("local_links", {})[machine_key()] = links
     return links

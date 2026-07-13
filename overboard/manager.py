@@ -2,7 +2,7 @@
 agent's to-do list. NO API — the /overboard agent (Max sub) produces all the
 prose; this module only does deterministic bookkeeping."""
 
-from overboard import events
+from overboard import events, store
 
 STOP_TYPES = ("Stop", "SubagentStop")
 _RECENT_KEEP = 25
@@ -69,4 +69,28 @@ def pending_work(state: dict, ai: dict) -> list[dict]:
             "head_sig": head_sig,
         })
     out.sort(key=lambda w: w["newest_stop_ts"], reverse=True)
+
+    # Grouping to-do: if the live repo set isn't covered by the assistant's last
+    # grouping (new/removed repos, or none set yet), ask it to (re)group. Until it
+    # does, resolve_projects shows the prefix-stem fallback (dimmed).
+    grouping_item = _grouping_todo(state, ai)
+    if grouping_item:
+        out.insert(0, grouping_item)
     return out
+
+
+def _grouping_todo(state: dict, ai: dict) -> dict | None:
+    live = sorted({s for p in state.get("projects", {}).values() for s in p.get("repos", {})})
+    if not live:
+        return None
+    grouping = ai.get("grouping") or {}
+    if grouping.get("signature") == store.slug_signature(live):
+        return None
+    grouped = {s for g in (grouping.get("groups") or {}).values() for s in g.get("repos", [])}
+    return {
+        "kind": "grouping",
+        "need_grouping": True,
+        "reason": "repos not covered by current grouping" if grouped else "no grouping set yet",
+        "all_repos": live,
+        "ungrouped": [s for s in live if s not in grouped],
+    }

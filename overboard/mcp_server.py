@@ -222,6 +222,65 @@ def set_snippets(slug: str, items=None):
     return f"{len(clean)} snippet(s) set for {slug}"
 
 
+def set_data_shape(slug: str, items=None):
+    if slug not in _known_slugs():
+        return f"unknown repo {slug!r} (call list_projects)"
+    clean = []
+    for it in (items or []):
+        if not isinstance(it, dict):
+            continue
+        line = it.get("line")
+        fields = it.get("fields")
+        clean.append({
+            "name": str(it.get("name", ""))[:160],
+            "kind": str(it.get("kind", ""))[:40],
+            "fields": [str(f)[:160] for f in fields][:60] if isinstance(fields, list) else [],
+            "file": str(it.get("file", ""))[:300],
+            "line": line if isinstance(line, int) else None,
+            "note": str(it.get("note", ""))[:400],
+        })
+    ai = store.load_ai()
+    ai.setdefault("data_shape", {})[slug] = {"items": clean[:60], "at": _now_iso()}
+    store.save_ai(ai)
+    return f"{len(clean)} data-shape item(s) set for {slug}"
+
+
+def _all_tracked_slugs(state: dict) -> set:
+    """Every repo slug Overboard is tracking (union across projects) — the set
+    a full grouping is expected to cover, whether or not it's cloned locally."""
+    return {s for p in state.get("projects", {}).values() for s in p.get("repos", {})}
+
+
+def set_grouping(groups=None):
+    """Set how repos cluster into projects and each project's display name.
+    groups: list of {key, display, repos:[slug]}. `key` is a stable identity
+    (reuse it across re-groups; never rename it — rename via `display` only)."""
+    state = store.load_state()
+    live = _all_tracked_slugs(state)
+    clean: dict = {}
+    seen: set = set()
+    for g in (groups or []):
+        if not isinstance(g, dict):
+            continue
+        key = str(g.get("key") or "").strip()[:80]
+        if not key or key in clean:
+            continue
+        repos = [str(s).strip() for s in (g.get("repos") or [])]
+        repos = [s for s in repos if s in live and s not in seen]
+        if not repos:
+            continue
+        seen.update(repos)
+        clean[key] = {"display": (str(g.get("display") or key).strip()[:120]), "repos": repos}
+    ai = store.load_ai()
+    # Signature over the FULL live set, so resolve_projects only treats this as an
+    # exact match when the grouping actually covers every tracked repo.
+    ai["grouping"] = {"signature": store.slug_signature(live), "groups": clean, "at": _now_iso()}
+    store.save_ai(ai)
+    missed = len(live) - len(seen)
+    tail = f"; {missed} repo(s) left ungrouped" if missed else ""
+    return f"grouping set: {len(clean)} project(s) over {len(seen)} repo(s){tail}"
+
+
 def flag_for_review(project: str, note: str):
     slug = _resolve_to_slug(store.load_state(), project)
     if not slug:
@@ -259,7 +318,7 @@ _S = {"type": "string"}
 _I = {"type": "integer"}
 _OBJ_ARR = {"type": "array", "items": {"type": "object"}}
 TOOLS = [
-    ("get_pending_work", "Your to-do list. Each entry is a project needing attention, with need_summary (commits changed) and/or need_digest (new finished work) plus its repo slugs. Start every update pass here; if empty, nothing to do.", {}, [], get_pending_work),
+    ("get_pending_work", "Your to-do list. Each entry is a project needing attention, with need_summary (commits changed) and/or need_digest (new finished work) plus its repo slugs. May also include a grouping item {kind:'grouping', need_grouping:true, all_repos:[...], ungrouped:[...]} — handle it FIRST by calling set_grouping so projects are named right. Start every update pass here; if empty, nothing to do.", {}, [], get_pending_work),
     ("list_projects", "Repo slugs Overboard tracks on this machine + local paths. Use the slug for get_repo_analysis / get_commits / set_architecture.", {}, [], list_projects),
     ("get_commits", "Recent Bitbucket commits for a repo (includes work pushed from other machines). Basis for a commit-status summary.", {"slug": _S, "limit": _I}, ["slug"], get_commits),
     ("get_repo_analysis", "Static analysis of a repo's local clone: prompts, DB-schema shape, file structure, and manifest_digest (turn it into an architecture write-up via set_architecture). No AI is run — that's your job.", {"slug": _S}, ["slug"], get_repo_analysis),
@@ -271,6 +330,8 @@ TOOLS = [
     ("set_prompts", "Set a repo's REAL LLM prompts (this replaces the noisy static keyword scan). items: list of {name, text, file, line, dynamic (true if built at runtime — then text is the code that assembles it), note}. Read the actual clone to find genuine system prompts / templates.", {"slug": _S, "items": _OBJ_ARR}, ["slug", "items"], set_prompts),
     ("set_setup", "Set a repo's setup/run instructions (how to install and run it), shown as a dashboard panel. Plain text / simple markdown, grounded in the README + manifests + entrypoints.", {"slug": _S, "text": _S}, ["slug", "text"], set_setup),
     ("set_snippets", "Set a repo's key code snippets. items: list of {title, file, line, code, note} — a few important excerpts (entrypoint, core handler, tricky bits) a human can eyeball without opening the repo.", {"slug": _S, "items": _OBJ_ARR}, ["slug", "items"], set_snippets),
+    ("set_data_shape", "Set a repo's data model / DB shape (this replaces the static schema scanner, which only knows SQL/Prisma/Django). items: list of {name, kind (table|collection|entity|model|type), fields (list of 'name: type' strings), file, line, note}. Read the actual clone — works for ANY stack: SQL DDL, Prisma, Django/SQLAlchemy, JPA/Hibernate @Entity, .NET EF DbContext, Mongoose/Mongo collections, GORM, ActiveRecord, Diesel. Empty if the repo has no persistent data model.", {"slug": _S, "items": _OBJ_ARR}, ["slug", "items"], set_data_shape),
+    ("set_grouping", "Set how repos cluster into projects AND each project's display name (replaces the prefix-stem guess). groups: list of {key, display, repos:[slug]}. Give one group per real product. `key` is a STABLE identity string: reuse the same key across re-groups and NEVER rename it (rename by editing `display` only) — the key is how summaries/digests/launches stay attached. `display` is the human name shown in the sidebar. Cover every slug from get_pending_work's all_repos / list_projects.", {"groups": _OBJ_ARR}, ["groups"], set_grouping),
     ("flag_for_review", "Flag something the CTO must know or act on — NOT a feature recap. Use for: something the human has to do (from a finished-work message — restart, add a key, decide, review a risky change), a non-obvious gotcha in how it now works, or an assumption the Claude made. Never flag 'added feature X'. project may be a group name or repo slug; note is the one specific thing.", {"project": _S, "note": _S}, ["project", "note"], flag_for_review),
     ("record_status", "Post a short status line to a project's activity feed. Accepts a project group name or a repo slug.", {"project": _S, "note": _S}, ["project", "note"], record_status),
     ("launch_dashboard", "Start the Overboard dashboard web server (if not already running) and return its URL.", {}, [], launch_dashboard),
