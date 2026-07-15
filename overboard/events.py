@@ -6,11 +6,24 @@ manager. Same on-disk path as the hook, sourced from store.STATE_DIR."""
 
 import json
 import os
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 from overboard import localrepo, store
 
 EVENTS_PATH = store.STATE_DIR / "events.jsonl"
+
+# Retention for the raw log. Nothing reads past the dashboard's 30-day window
+# (the recent feed keeps 25 events/repo and pending-work only compares fresh
+# stop timestamps), so older lines are pure parse cost on every read.
+RETENTION_DAYS = 30
+MAX_BYTES = 5 * 1024 * 1024
+_COMPACT_EVERY_S = 24 * 3600
+
+_compact_lock = threading.Lock()
+_last_compact = 0.0
 
 
 def read_events(since_ts: float = 0.0, limit: int = 5000) -> list[dict]:
@@ -68,3 +81,80 @@ def append_event(evt: dict) -> None:
     EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(EVENTS_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(evt) + "\n")
+
+
+def maybe_compact() -> bool:
+    """Cheap guard around compact(): at most once per day, unless the log has
+    blown past MAX_BYTES. Never raises — safe to kick from any refresh path."""
+    global _last_compact
+    if not _compact_lock.acquire(blocking=False):
+        return False
+    try:
+        try:
+            size = EVENTS_PATH.stat().st_size
+        except OSError:
+            return False
+        now = time.monotonic()
+        if size <= MAX_BYTES and _last_compact and now - _last_compact < _COMPACT_EVERY_S:
+            return False
+        _last_compact = now
+        try:
+            return compact()
+        except Exception:
+            return False
+    finally:
+        _compact_lock.release()
+
+
+def compact(max_age_days: int = RETENTION_DAYS, max_bytes: int = MAX_BYTES) -> bool:
+    """Trim the event log: drop events older than max_age_days, then, if the
+    survivors still exceed max_bytes, drop oldest-first until they fit.
+
+    Hooks append concurrently (they must never coordinate), so after writing
+    the kept lines to a temp file we carry over any bytes appended past the
+    offset we read to, then atomically replace. The residual race window is a
+    few syscalls wide; worst case is one lost activity event."""
+    cutoff = time.time() - max_age_days * 86400
+    kept: list[bytes] = []
+    offset = 0
+    dropped = False
+    try:
+        with open(EVENTS_PATH, "rb") as f:
+            for line in f:
+                offset += len(line)
+                try:
+                    ts = json.loads(line).get("ts", 0)
+                except (ValueError, AttributeError):
+                    dropped = True  # malformed line: drop it
+                    continue
+                if ts > cutoff:
+                    kept.append(line)
+                else:
+                    dropped = True
+    except OSError:
+        return False
+
+    kept_bytes = sum(len(ln) for ln in kept)
+    while kept and kept_bytes > max_bytes:
+        kept_bytes -= len(kept.pop(0))
+        dropped = True
+    if not dropped:
+        return False
+
+    fd, tmp = tempfile.mkstemp(dir=str(EVENTS_PATH.parent),
+                               prefix=EVENTS_PATH.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.writelines(kept)
+            # Carry over anything hooks appended while we were reading.
+            with open(EVENTS_PATH, "rb") as f:
+                f.seek(offset)
+                out.write(f.read())
+        os.replace(tmp, EVENTS_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return True

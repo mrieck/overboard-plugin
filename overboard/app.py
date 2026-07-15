@@ -19,7 +19,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from overboard import analysis, diagram, localrepo, manager, providers, store
+from overboard import analysis, diagram, events, localrepo, manager, providers, store
 
 APP_TITLE = "Overboard"
 ICON_NORMAL = "applications-development"
@@ -411,6 +411,7 @@ class Api:
         # every project's details are ready without the user asking.
         self._kick_analyses()
         self._kick_sync()
+        self._kick_event_compact()
 
     # ---- read -----------------------------------------------------------
     def get_view(self) -> dict:
@@ -561,6 +562,7 @@ class Api:
         # background so details stay current without a button.
         self._kick_analyses()
         self._kick_sync()
+        self._kick_event_compact()
         return self._build_view()
 
     def tick(self) -> dict:
@@ -775,6 +777,12 @@ class Api:
         missing or stale (HEAD moved / analyzer bumped). Static-only, no API, so
         it's safe to run unattended; the frontend just reads the cached result."""
         threading.Thread(target=self._ensure_analyses, daemon=True).start()
+
+    def _kick_event_compact(self) -> None:
+        """Trim events.jsonl (30-day retention + size cap) in the background.
+        maybe_compact() self-guards (daily interval, size trigger, lock) so
+        kicking on every refresh is free."""
+        threading.Thread(target=events.maybe_compact, daemon=True).start()
 
     def _ensure_analyses(self) -> None:
         if not self._analysis_lock.acquire(blocking=False):

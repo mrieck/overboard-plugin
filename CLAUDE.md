@@ -63,6 +63,10 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
   `get_project_context` tool but never writes. One active launch per project;
   completed ones move to `past_launches`.
 - `events.jsonl` — append-only (hooks + flags/status). Safe by construction.
+  The dashboard compacts it in the background (`events.maybe_compact`): 30-day
+  retention + 5 MB cap, at most once a day. Hooks never trim — they must stay
+  append-only and non-blocking; compaction re-appends any tail written during
+  the rewrite before the atomic replace.
 - `credentials.json` — sources/tokens (see below).
 
 `store._atomic_write` uses a **unique** temp file (`tempfile.mkstemp`) per write —
