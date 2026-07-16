@@ -17,16 +17,26 @@ just landed, what decisions it baked in, and what new surface now exists.
 
 ## Git usage (read-only, bounded)
 
-- Only read-only git: `git log`, `git show`, `git diff`, `git rev-parse`,
-  `git cat-file`. **Never fetch, pull, checkout, or mutate the clone.**
-- Pick the commit range:
+- Read-only git only: `git log`, `git show`, `git diff`, `git rev-parse`,
+  `git cat-file`, and a **read-only `git fetch`**. **Never pull, merge, checkout,
+  reset, or otherwise mutate the working tree, index, or current branch** — a
+  bare `git fetch` only updates remote-tracking refs (`origin/<branch>`) and is
+  the one network write allowed. This is how a stale clone still yields real
+  diffs when the team pushed from another machine.
+- Refresh first, then diff the remote tip:
+  - Run `git fetch origin <branch>` (best-effort). If it fails — e.g. no
+    headless credentials — fall back to the local `HEAD` for everything below
+    and say so in your summary.
+  - Let `TIP` be `origin/<branch>` when the fetch succeeded, else `HEAD`.
+- Pick the commit range against `TIP`:
   - If `since` is a hash, verify it exists with `git cat-file -e <since>`;
-    if it does, review `<since>..HEAD`.
+    if it does, review `<since>..TIP`.
   - If `since` is `none`, or the hash is missing (force-push/rebase), use the
-    bounded fallback: `git log --max-count=20 --since="7 days ago"`, and if
-    that is empty, `git log --max-count=20`.
-- Record `git rev-parse HEAD` as `reviewed_head` — this is load-bearing: the
-  parent stores it as the review basis so the next pass diffs from here.
+    bounded fallback: `git log --max-count=20 --since="7 days ago" TIP`, and if
+    that is empty, `git log --max-count=20 TIP`.
+- Record `git rev-parse TIP` as `reviewed_head` — this is load-bearing: the
+  parent stores it as the review basis (matching the provider head, so
+  need_review clears) and the next pass diffs from here.
 - Scope before diffing: run `git log --oneline --stat <range>` first, then
   `git show` only the commits/paths that matter. Skip lockfiles, vendored and
   minified files, and generated assets.
@@ -67,8 +77,8 @@ End your turn with ONLY a fenced ```json block containing:
 ```json
 {
   "slug": "<the slug you were given>",
-  "reviewed_head": "<git rev-parse HEAD — full hash>",
-  "range": "<since>..HEAD or the fallback you used",
+  "reviewed_head": "<git rev-parse of the reviewed TIP — full hash>",
+  "range": "<since>..TIP or the fallback you used",
   "commits": ["abc123f", "..."],
   "suggested_units": [
     {

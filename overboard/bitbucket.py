@@ -55,6 +55,36 @@ def _get(session: _Session, url: str, params: dict | None, who: str) -> dict:
         raise BitbucketError(who, f"bad JSON response: {e}") from e
 
 
+def _get_raw(session: _Session, url: str, who: str) -> str:
+    """Like `_get`, but returns the raw response text (no JSON) — for endpoints
+    such as /diff that answer with a unified patch rather than JSON."""
+    req = urllib.request.Request(
+        url, headers={"Authorization": session.auth_header, "Accept": "text/plain"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            return resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise AuthError(who, "Bitbucket auth failed (token invalid or expired)") from e
+        if e.code == 404:
+            raise BitbucketError(who, "not found (repo or commits)") from e
+        raise BitbucketError(who, f"HTTP {e.code}") from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise BitbucketError(who, f"network error: {e}") from e
+
+
+def fetch_diff(session: _Session, workspace: str, slug: str, base: str, head: str) -> dict:
+    """Unified diff of `head` relative to `base`, as {"patch", "files": [],
+    "truncated": False}. Bitbucket's /diff/{spec} returns raw patch text, not
+    JSON, so `files` is left empty (the raw patch is the deliverable). NOTE:
+    the spec order is `{head}..{base}` — verify the direction against a real
+    repo. One request; the caller caps the patch size."""
+    url = f"{API_BASE}/repositories/{workspace}/{slug}/diff/{head}..{base}"
+    patch = _get_raw(session, url, slug)
+    return {"patch": patch, "files": [], "truncated": False}
+
+
 def fetch_recent_commits(
     session: _Session, workspace: str, slug: str, branch: str, pagelen: int = 30
 ) -> list[dict]:

@@ -125,6 +125,28 @@ def fetch_recent_commits(
     return out
 
 
+def fetch_diff(session: _Session, owner: str, repo: str, base: str, head: str) -> dict:
+    """Unified diff for `base...head` via the compare API, as
+    {"patch", "files": [{"path", "status", "patch"}], "truncated"}. GitHub caps
+    the compare file list at 300 files; a changed file whose `patch` is omitted
+    (too large / binary) also marks the result truncated. One request."""
+    url = f"{API}/repos/{owner}/{repo}/compare/{base}...{head}"
+    body, _ = _get(session, url, {"per_page": 100}, repo)
+    files = body.get("files") or []
+    out_files, chunks, truncated = [], [], False
+    for f in files:
+        path = f.get("filename", "")
+        patch = f.get("patch")
+        if patch:
+            chunks.append(f"diff --git a/{path} b/{path}\n{patch}")
+        elif f.get("changes"):
+            truncated = True  # changed file whose patch GitHub omitted
+        out_files.append({"path": path, "status": f.get("status", ""), "patch": patch or ""})
+    if len(out_files) >= 300:
+        truncated = True
+    return {"patch": "\n".join(chunks), "files": out_files, "truncated": truncated}
+
+
 def _parse_iso(iso: str):
     # GitHub timestamps look like 2026-07-10T12:00:00Z.
     try:

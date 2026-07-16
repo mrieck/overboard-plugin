@@ -53,12 +53,134 @@ async function renderMermaid(host, code) {
   try {
     const id = "mmd-" + Math.random().toString(36).slice(2);
     const { svg } = await mermaid.render(id, code);
-    wrap.innerHTML = svg;
+    wrap.appendChild(diagramViewer(svg));
   } catch (e) {
     wrap.className = "subtle";
     wrap.textContent = "diagram unavailable: " + (e && e.message ? e.message : e);
   }
 }
+
+// ---- interactive diagram viewer (pan/zoom + fullscreen) --------------------
+// Mermaid renders an SVG at natural size; force-fitting it to the panel width
+// (the old `max-width:100%`) shrank the text to nothing on dense ER diagrams.
+// Instead we drop it on a pannable/zoomable canvas that starts fit-to-view.
+
+// Natural pixel size of a mermaid SVG, parsed from its viewBox (no DOM needed).
+function svgNatural(svg) {
+  const vb = (svg.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+  if (vb.length === 4 && vb[2] > 0 && vb[3] > 0) return { w: vb[2], h: vb[3] };
+  return { w: parseFloat(svg.getAttribute("width")) || 800,
+           h: parseFloat(svg.getAttribute("height")) || 400 };
+}
+
+// Build a pan/zoom viewer around a rendered SVG string. `fullscreen` drops the
+// Expand button (it's already expanded). Returns the root element.
+function diagramViewer(svgMarkup, fullscreen) {
+  const root = el("div", "diagram");
+  const viewport = el("div", "diagram-viewport");
+  const canvas = el("div", "diagram-canvas");
+  canvas.innerHTML = svgMarkup;
+  root.appendChild(viewport);
+  viewport.appendChild(canvas);
+
+  const svg = canvas.querySelector("svg");
+  const nat = svg ? svgNatural(svg) : { w: 800, h: 400 };
+  if (svg) {
+    // Pin the SVG to its natural size so the canvas has real dimensions to scale.
+    svg.style.maxWidth = "none";
+    svg.style.width = nat.w + "px";
+    svg.style.height = nat.h + "px";
+    svg.style.display = "block";
+  }
+
+  const st = { scale: 1, x: 0, y: 0, min: 0.1, max: 8 };
+  const apply = () => { canvas.style.transform =
+    `translate(${st.x}px, ${st.y}px) scale(${st.scale})`; };
+  function fit() {
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    if (!vw || !vh || !nat.w || !nat.h) return;
+    st.scale = Math.max(st.min, Math.min(st.max, Math.min(vw / nat.w, vh / nat.h)));
+    st.x = (vw - nat.w * st.scale) / 2;
+    st.y = (vh - nat.h * st.scale) / 2;
+    apply();
+  }
+  function zoomAt(factor, cx, cy) {
+    const ns = Math.max(st.min, Math.min(st.max, st.scale * factor));
+    const k = ns / st.scale;
+    st.x = cx - k * (cx - st.x);
+    st.y = cy - k * (cy - st.y);
+    st.scale = ns;
+    apply();
+  }
+
+  viewport.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = viewport.getBoundingClientRect();
+    zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+
+  let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
+  viewport.addEventListener("pointerdown", (e) => {
+    drag = true; sx = e.clientX; sy = e.clientY; ox = st.x; oy = st.y;
+    viewport.setPointerCapture(e.pointerId); viewport.classList.add("grabbing");
+  });
+  viewport.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    st.x = ox + (e.clientX - sx); st.y = oy + (e.clientY - sy); apply();
+  });
+  const endDrag = () => { drag = false; viewport.classList.remove("grabbing"); };
+  viewport.addEventListener("pointerup", endDrag);
+  viewport.addEventListener("pointercancel", endDrag);
+
+  const bar = el("div", "diagram-toolbar");
+  const mid = () => ({ cx: viewport.clientWidth / 2, cy: viewport.clientHeight / 2 });
+  const btn = (label, title, fn) => {
+    const b = el("button", "btn ghost small", label);
+    b.title = title;
+    b.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
+    bar.appendChild(b);
+  };
+  btn("−", "Zoom out", () => { const m = mid(); zoomAt(1 / 1.2, m.cx, m.cy); });
+  btn("Reset", "Fit to view", fit);
+  btn("+", "Zoom in", () => { const m = mid(); zoomAt(1.2, m.cx, m.cy); });
+  if (!fullscreen) btn("⤢", "Expand to fullscreen", () => openDiagramModal(svgMarkup));
+  root.appendChild(bar);
+
+  // Fit once the viewport actually has a measured size (it's built detached).
+  const tryFit = (n) => {
+    if (viewport.clientWidth && viewport.clientHeight) fit();
+    else if (n < 12) requestAnimationFrame(() => tryFit(n + 1));
+  };
+  requestAnimationFrame(() => tryFit(0));
+  root._fit = fit;
+  return root;
+}
+
+function openDiagramModal(svgMarkup) {
+  closeDiagramModal();
+  const ov = el("div", "modal-overlay");
+  ov.id = "diagram-modal";
+  ov.addEventListener("click", (e) => { if (e.target === ov) closeDiagramModal(); });
+  const box = el("div", "modal modal-diagram");
+  const head = el("div", "modal-head");
+  head.appendChild(el("h3", null, "Diagram"));
+  const close = el("button", "btn ghost small", "Close");
+  close.addEventListener("click", closeDiagramModal);
+  head.appendChild(close);
+  box.appendChild(head);
+  const viewer = diagramViewer(svgMarkup, true);
+  box.appendChild(viewer);
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+  requestAnimationFrame(() => viewer._fit && viewer._fit());
+  document.addEventListener("keydown", _escCloseDiagram);
+}
+function closeDiagramModal() {
+  const m = document.getElementById("diagram-modal");
+  if (m) m.remove();
+  document.removeEventListener("keydown", _escCloseDiagram);
+}
+function _escCloseDiagram(e) { if (e.key === "Escape") closeDiagramModal(); }
 
 async function init() {
   wireControls();
@@ -519,13 +641,13 @@ function workCard(proj, u) {
 async function renderWorkMermaid(host, unitId, code) {
   const wrap = el("div", "mermaid-out");
   host.appendChild(wrap);
-  if (WORK_MMD[unitId]) { wrap.innerHTML = WORK_MMD[unitId]; return; }
+  if (WORK_MMD[unitId]) { wrap.appendChild(diagramViewer(WORK_MMD[unitId])); return; }
   if (!code || !window.mermaid) { wrap.remove(); return; }
   try {
     const id = "mmd-" + Math.random().toString(36).slice(2);
     const { svg } = await mermaid.render(id, code);
     WORK_MMD[unitId] = svg;
-    wrap.innerHTML = svg;
+    wrap.appendChild(diagramViewer(svg));
   } catch (e) {
     wrap.className = "subtle";
     wrap.textContent = "diagram unavailable: " + (e && e.message ? e.message : e);
@@ -1015,6 +1137,40 @@ function snippetsTab(d) {
   return frag;
 }
 
+// Map a file path's extension to a highlight.js language name (best-effort).
+const HL_EXT = {
+  py: "python", js: "javascript", mjs: "javascript", cjs: "javascript",
+  ts: "typescript", jsx: "javascript", tsx: "typescript",
+  go: "go", rs: "rust", java: "java", cs: "csharp", rb: "ruby", php: "php",
+  swift: "swift", m: "objectivec", mm: "objectivec", h: "objectivec",
+  kt: "kotlin", kts: "kotlin", dart: "dart", scala: "scala",
+  ex: "elixir", exs: "elixir", sh: "bash", bash: "bash", zsh: "bash",
+  sql: "sql", json: "json", yml: "yaml", yaml: "yaml", toml: "ini", ini: "ini",
+  html: "xml", xml: "xml", css: "css", scss: "scss", less: "less",
+  c: "c", cpp: "cpp", cc: "cpp", cxx: "cpp", hpp: "cpp",
+  lua: "lua", pl: "perl", r: "r", md: "markdown", diff: "diff",
+};
+
+function langFromFile(file) {
+  if (!file) return "";
+  const base = String(file).split(/[?#]/)[0].replace(/:\d+$/, "").split("/").pop().toLowerCase();
+  if (base === "makefile") return "makefile";
+  const ext = base.includes(".") ? base.split(".").pop() : "";
+  return HL_EXT[ext] || "";
+}
+
+// Fill a <code> element with syntax-highlighted text — highlight.js is vendored
+// offline (index.html). Falls back to plain text if hljs is missing or errors.
+function highlightInto(codeEl, text, file) {
+  codeEl.textContent = text || "";
+  if (!window.hljs) return;
+  try {
+    const lang = langFromFile(file);
+    if (lang && hljs.getLanguage(lang)) codeEl.className = ("language-" + lang + " " + codeEl.className).trim();
+    hljs.highlightElement(codeEl);
+  } catch (e) { /* leave plain on any hljs error */ }
+}
+
 // One code-snippet block ({title, file, line, code, note}) — shared by the
 // Snippets analysis tab and the recent-work cards.
 function snippetEl(s) {
@@ -1037,7 +1193,7 @@ function snippetEl(s) {
   box.appendChild(meta);
 
   const code = document.createElement("code");
-  code.textContent = s.code || "";
+  highlightInto(code, s.code || "", s.file);
   box.appendChild(code);
   if (s.note) {
     const nt = document.createElement("div");

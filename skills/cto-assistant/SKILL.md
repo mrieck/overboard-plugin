@@ -115,19 +115,26 @@ answer "what just landed, and do I agree with it". When a pending entry has
    commit hash (or `null` for a first-ever review), and
    **`recent_review_titles`** lists the last few card titles — reuse their
    naming style for continuing themes.
-2. For each repo **with a local clone** (`list_projects` paths), spawn the
-   **`work-reviewer`** subagent (via the Task tool) with the slug, path, its
-   `review_since` hash (or `none`), and branch. It reads the real git diffs and
-   returns `{reviewed_head, suggested_units}` — decisions, new surface,
-   snippets. It never fetches or pulls.
-3. For repos **without a clone**, build a shallower unit yourself from
-   `get_commits(slug)` with `source: "messages"` — commit messages only, no
-   snippets expected. Also fall back to this for a clone that stays stale
-   (never pulled) so its card doesn't block forever.
+2. For each repo **with a local clone** (`list_projects` paths — fresh *or*
+   stale), spawn the **`work-reviewer`** subagent (via the Task tool) with the
+   slug, path, its `review_since` hash (or `none`), and branch. It does a
+   read-only `git fetch` and diffs against `origin/<branch>`, returning
+   `{reviewed_head, suggested_units}` — decisions, new surface, snippets. It
+   never pulls, merges, or checks out.
+3. For repos **without a clone on this machine** (e.g. a Mac-only iOS app seen
+   from the Linux/DO box), call **`get_recent_diff(slug, review_since[slug])`**.
+   If it returns a `patch`, review that real diff yourself and build a full
+   `source: "diffs"` unit (decisions, new surface, snippets from the patch),
+   passing `reviewed_heads={slug: head}`. Only if it returns an **`error`**
+   (no creds / force-push / provider down) fall back to a shallower
+   `get_commits(slug)` unit with `source: "messages"` — commit subjects only,
+   no snippets. (`get_recent_diff` also caps huge diffs and sets `truncated` —
+   go lighter when it does.)
 4. **Cluster across repos into 1–3 themes** for the project (an app's `-api` +
    `-web` work on one feature is ONE unit), then call
-   **`record_work_review(project, units, reviewed_heads)`** — pass each
-   subagent's `reviewed_head` so a behind-the-remote clone self-heals.
+   **`record_work_review(project, units, reviewed_heads)`** — pass each repo's
+   reviewed head (the subagent's `reviewed_head`, or `head` from
+   `get_recent_diff`) so a behind-the-remote clone self-heals.
 5. If the diffs turn out to be empty/immaterial, call it with **`units=[]`** —
    that advances the basis so `need_review` clears without adding a card.
 

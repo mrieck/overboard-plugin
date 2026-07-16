@@ -36,6 +36,19 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _clip_note(text, limit=500):
+    """Clip to `limit` chars at a word boundary (no mid-word chop) + ellipsis.
+    Returns (clipped, original_len, was_trimmed)."""
+    s = (text or "").strip()
+    if len(s) <= limit:
+        return s, len(s), False
+    cut = s[:limit].rstrip()
+    sp = cut.rfind(" ")
+    if sp > limit * 0.6:            # only back up if we don't lose too much
+        cut = cut[:sp].rstrip()
+    return cut + "…", len(s), True
+
+
 def _known_slugs() -> dict:
     return localrepo.links_for_machine(store.load_state())
 
@@ -95,6 +108,53 @@ def get_commits(slug: str, limit: int = 20):
     return commits[:limit]
 
 
+_DIFF_CAP = 200_000  # ~200 KB of patch text is plenty for a sprint delta
+
+
+def get_recent_diff(slug: str, since: str = None):
+    state, config = store.load_state(), store.load_config()
+    repo = None
+    for p in state.get("projects", {}).values():
+        r = p.get("repos", {}).get(slug)
+        if r:
+            repo = {
+                "provider": r.get("provider") or "bitbucket",
+                "workspace": r.get("workspace"),
+                "slug": slug,
+                "branch": r.get("branch"),
+                "head": r.get("head"),
+            }
+            break
+    if not repo or not repo["branch"]:
+        return {"error": f"unknown repo {slug!r} (call list_projects)", "source": "messages"}
+    head = repo.get("head")
+    if not head:
+        return {"error": f"no known head for {slug!r} (refresh first)", "source": "messages"}
+    src = next((s for s in store.load_sources(config) if s["provider"] == repo["provider"]), None)
+    if not src:
+        return {"error": f"{repo['provider']} source not configured for {slug!r}", "source": "messages"}
+    repo["workspace"] = repo["workspace"] or src.get("workspace") or config.get("workspace")
+    try:
+        session = providers.make_session(src)
+        base = (since or "").strip()
+        if not base:
+            # First-ever review: bound the base so we never diff all of history.
+            recent = providers.commits(repo, session, pagelen=30)
+            base = recent[min(len(recent) - 1, 20)]["hash"] if recent else head
+        if base == head:
+            return {"source": "diffs", "slug": slug, "base": base, "head": head,
+                    "patch": "", "files": [], "truncated": False}
+        result = providers.diff(repo, session, base, head)
+    except providers.ProviderError as e:
+        return {"error": str(e), "source": "messages"}
+    patch = result.get("patch") or ""
+    truncated = bool(result.get("truncated"))
+    if len(patch) > _DIFF_CAP:
+        patch, truncated = patch[:_DIFF_CAP], True
+    return {"source": "diffs", "slug": slug, "base": base, "head": head,
+            "patch": patch, "files": result.get("files") or [], "truncated": truncated}
+
+
 def get_repo_analysis(slug: str):
     path = _known_slugs().get(slug)
     if not path:
@@ -147,15 +207,28 @@ def record_digest(project: str, narrative: str, review=None):
     p = state.get("projects", {}).get(project)
     if not p:
         return f"unknown project {project!r} (see get_pending_work)"
+    items, long_items = [], 0
+    for r in (review or []):
+        s = str(r).strip()
+        if not s:
+            continue
+        clipped, _orig, trimmed = _clip_note(s)
+        long_items += trimmed
+        items.append(clipped)
+    items = items[:6]
     ai = store.load_ai()
     ai.setdefault("digests", {})[project] = {
         "narrative": (narrative or "").strip()[:600],
-        "review": [str(r).strip() for r in (review or []) if str(r).strip()][:6],
+        "review": items,
         "at": _now_iso(),
         "basis": {"stop_ts": _newest_stop_ts(state, project), "head_sig": p.get("head_sig", "")},
     }
     store.save_ai(ai)
-    return f"digest recorded for {project}"
+    msg = f"digest recorded for {project}"
+    if long_items:
+        msg += (f" — {long_items} review item(s) ran long and were trimmed; "
+                f"keep each to one line")
+    return msg
 
 
 _WORK_KINDS = {"model", "endpoint", "mcp-tool", "command", "config", "other"}
@@ -371,15 +444,20 @@ def flag_for_review(project: str, note: str):
     slug = _resolve_to_slug(store.load_state(), project)
     if not slug:
         return f"unknown project {project!r} (call get_pending_work / list_projects)"
-    events.append_event({"ts": time.time(), "type": "flag", "repo_hint": slug, "note": note.strip()[:500]})
-    return f"flagged for review on {project}"
+    clipped, orig, trimmed = _clip_note(note)
+    events.append_event({"ts": time.time(), "type": "flag", "repo_hint": slug, "note": clipped})
+    msg = f"flagged for review on {project}"
+    if trimmed:
+        msg += (f" — note was {orig} chars and was trimmed to fit; "
+                f"flags should be one line, so shorten it next time")
+    return msg
 
 
 def record_status(project: str, note: str):
     slug = _resolve_to_slug(store.load_state(), project)
     if not slug:
         return f"unknown project {project!r} (call get_pending_work / list_projects)"
-    events.append_event({"ts": time.time(), "type": "status", "repo_hint": slug, "note": note.strip()[:500]})
+    events.append_event({"ts": time.time(), "type": "status", "repo_hint": slug, "note": _clip_note(note)[0]})
     return f"status recorded for {project}"
 
 
@@ -407,6 +485,7 @@ TOOLS = [
     ("get_pending_work", "Your to-do list. Each entry is a project needing attention, with need_summary (commits changed), need_digest (new finished work), and/or need_review (work landed since the last recent-work review — see record_work_review; review_since maps each repo slug to the last-reviewed hash or null, and recent_review_titles lists prior card titles for theme-name consistency), plus its repo slugs. Entries carry `launch` {type, title, target_date, days_until} when the CTO has an active launch — use it to ground your prose; call get_project_context only when you need the full plan (goals, push-back history, vision). May also include a grouping item {kind:'grouping', need_grouping:true, all_repos:[...], ungrouped:[...]} — handle it FIRST by calling set_grouping so projects are named right. Start every update pass here; if empty, nothing to do.", {}, [], get_pending_work),
     ("list_projects", "Repo slugs Overboard tracks on this machine + local paths. Use the slug for get_repo_analysis / get_commits / set_architecture.", {}, [], list_projects),
     ("get_commits", "Recent Bitbucket commits for a repo (includes work pushed from other machines). Basis for a commit-status summary.", {"slug": _S, "limit": _I}, ["slug"], get_commits),
+    ("get_recent_diff", "Real diff for a repo with NO local clone on THIS machine (e.g. a Mac-only iOS app seen from the Linux/DO box). Fetches the unified diff for review_since..head straight from the provider (GitHub compare / Bitbucket diff) so you can build a real source:'diffs' recent-work card instead of a messages-only one. slug is a repo slug; since = review_since[slug] (the last-reviewed hash; omit for a bounded first review). Returns {source:'diffs', base, head, patch, files, truncated} — review the patch yourself and call record_work_review with reviewed_heads={slug: head}. If it returns an 'error' (no creds / force-push / provider down), fall back to get_commits with source:'messages'. When a local clone DOES exist, prefer the work-reviewer subagent instead.", {"slug": _S, "since": _S}, ["slug"], get_recent_diff),
     ("get_repo_analysis", "Static analysis of a repo's local clone: prompts, DB-schema shape, file structure, and manifest_digest (turn it into an architecture write-up via set_architecture). No AI is run — that's your job.", {"slug": _S}, ["slug"], get_repo_analysis),
     ("get_project_events", "Recent activity events for a project or repo (Stop/tool/flag/status), most recent last — raw material for a digest.", {"project": _S, "limit": _I}, ["project"], get_project_events),
     ("get_project_context", "The CTO's plans for a project (READ-ONLY, CTO-owned): active launch/milestone (type, title, action, target_date, days_until, goals, push-back history), past launches, and the vision/direction text. Use it to sharpen summaries and to flag when a launch is near and its goals look unmet, or the plan has slipped.", {"project": _S}, ["project"], get_project_context),

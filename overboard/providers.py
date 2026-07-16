@@ -16,7 +16,7 @@ from datetime import datetime
 from overboard import bitbucket, github
 from overboard.errors import AuthError, ProviderError  # re-exported
 
-__all__ = ["AuthError", "ProviderError", "make_session", "active_repos", "commits", "PROVIDERS"]
+__all__ = ["AuthError", "ProviderError", "make_session", "active_repos", "commits", "diff", "PROVIDERS"]
 
 PROVIDERS = ("bitbucket", "github")
 
@@ -65,4 +65,15 @@ def commits(repo: dict, session, pagelen: int = 30) -> list[dict]:
         return github.fetch_recent_commits(
             session, repo["workspace"], repo["slug"], repo["branch"], pagelen
         )
+    raise ProviderError(p, "unknown provider")
+
+
+def diff(repo: dict, session, base: str, head: str) -> dict:
+    """Unified diff between `base` and `head` for one normalized repo, via its
+    own provider. Returns {"patch", "files", "truncated"}."""
+    p = repo["provider"]
+    if p == "bitbucket":
+        return bitbucket.fetch_diff(session, repo["workspace"], repo["slug"], base, head)
+    if p == "github":
+        return github.fetch_diff(session, repo["workspace"], repo["slug"], base, head)
     raise ProviderError(p, "unknown provider")

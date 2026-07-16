@@ -46,11 +46,7 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 .title { display: flex; align-items: center; gap: 8px; }
-.title h1 { font-size: 15px; margin: 0; font-weight: 600; }
-.dot {
-  width: 9px; height: 9px; border-radius: 50%;
-  background: var(--green); box-shadow: 0 0 8px var(--green);
-}
+.title h1 { font-size: 20px; margin: 0; font-weight: 700; }
 .actions { display: flex; align-items: center; gap: 6px; }
 .status {
   padding: 6px 12px; color: var(--muted); font-size: 11px;
@@ -317,10 +313,15 @@ body.context-collapsed #context .context-head { justify-content: center; padding
 }
 .badge .link { cursor: pointer; }
 .badge .link:hover { text-decoration: underline; }
-.badge .sync { font-weight: 700; }
-.badge .sync.ok { color: var(--green); }
-.badge .sync.ahead { color: var(--amber); }
-.badge .sync.behind { color: var(--red); }
+.badge .sync {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  font-size: 12px; font-weight: 700; line-height: 1;
+  border: 1.5px solid currentColor;
+}
+.badge .sync.ok { color: var(--green); background: color-mix(in srgb, var(--green) 15%, transparent); }
+.badge .sync.ahead { color: var(--amber); background: color-mix(in srgb, var(--amber) 15%, transparent); }
+.badge .sync.behind { color: var(--red); background: color-mix(in srgb, var(--red) 15%, transparent); }
 
 /* ---- recent-work cards (assistant delta layer) ----------------------------- */
 .work-card {
@@ -401,6 +402,9 @@ body.context-collapsed #context .context-head { justify-content: center; padding
   display: block; font-family: "SF Mono", "JetBrains Mono", monospace;
   font-size: 11px; color: var(--text); white-space: pre-wrap; word-break: break-all;
 }
+/* highlight.js (vendored, offline): keep the theme's token colors but blend the
+   block into the snippet panel — drop the theme's dark bg and padding. */
+.finding code.hljs { background: transparent; padding: 0; }
 .finding.dim, .table-card.dim { opacity: 0.5; }
 .prow-name.dim { opacity: 0.6; font-style: italic; }
 .finding-note { margin-top: 5px; font-size: 11px; font-style: italic; }
@@ -420,6 +424,25 @@ body.context-collapsed #context .context-head { justify-content: center; padding
 .spinner { color: var(--muted); text-align: center; padding: 30px 0; }
 .mermaid-out {
   background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 10px; margin: 4px 0 10px; overflow: auto;
+  border-radius: 8px; margin: 4px 0 10px; overflow: hidden;
 }
-.mermaid-out svg { max-width: 100%; height: auto; }
+/* Interactive diagram viewer (ER / architecture / recent-work flows). The SVG
+   sits at natural size on a pannable/zoomable canvas so dense diagrams stay
+   legible instead of being shrunk to fit the panel. */
+.diagram { position: relative; }
+.diagram-viewport {
+  position: relative; height: 380px; overflow: hidden;
+  cursor: grab; touch-action: none; border-radius: 8px;
+}
+.diagram-viewport.grabbing { cursor: grabbing; }
+.diagram-canvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+.diagram-canvas svg { display: block; }
+.diagram-toolbar {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  display: flex; gap: 4px; padding: 3px;
+  background: rgba(0, 0, 0, 0.4); border-radius: 8px;
+}
+.diagram-toolbar .btn { min-width: 28px; padding: 2px 7px; }
+/* Fullscreen variant, mounted in the shared modal overlay. */
+.modal-diagram { width: min(96vw, 1400px); max-height: 92vh; }
+.modal-diagram .diagram-viewport { height: 78vh; }
