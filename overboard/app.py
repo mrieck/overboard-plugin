@@ -19,7 +19,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from overboard import analysis, diagram, events, localrepo, manager, providers, store
+from overboard import analysis, debuglog, diagram, events, localrepo, manager, providers, store
 
 APP_TITLE = "Overboard"
 ICON_NORMAL = "applications-development"
@@ -231,9 +231,12 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
         except providers.ProviderError:
             pass
 
-    repo_meta, source_errors = _gather_active_repos(sources, sessions, cutoff)
+    with debuglog.timer(f"refresh: list active repos ({len(sources)} source(s))"):
+        repo_meta, source_errors = _gather_active_repos(sources, sessions, cutoff)
     projects, discovery = resolve_projects(config, repo_meta, old_state)
     new_state["discovery"] = discovery
+    n_repos = sum(len(p["repos"]) for p in projects)
+    debuglog.log(f"refresh: {len(projects)} project(s), {n_repos} repo(s) — fetching commits per repo")
 
     for project in projects:
         name = project["name"]
@@ -255,7 +258,8 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
                 repos_state[slug] = {**old_repo, **base, "fetch_error": "provider not configured"}
                 continue
             try:
-                commits = providers.commits(repo, session)
+                with debuglog.timer(f"refresh: fetch commits {slug} ({provider})"):
+                    commits = providers.commits(repo, session)
             except providers.AuthError:
                 repos_state[slug] = {**old_repo, **base, "fetch_error": "auth failed"}
                 continue
@@ -318,7 +322,15 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
         new_state["project_order"] = old_state.get("project_order") or list(new_state["projects"])
         return new_state
 
-    new_state["project_order"] = [p["name"] for p in projects]
+    # Order by the actual latest commit date (what the chips/day-grids show),
+    # newest first — not the provider's repo `updated_on`, which bumps on
+    # non-commit events and made the order disagree with the visible recency.
+    # Projects with no dated commit sink to the bottom.
+    new_state["project_order"] = sorted(
+        (p["name"] for p in projects),
+        key=lambda n: new_state["projects"].get(n, {}).get("latest_commit_date") or "",
+        reverse=True,
+    )
     fetch_errors = [
         f"{slug}: {r['fetch_error']}"
         for proj in new_state["projects"].values()
@@ -428,6 +440,7 @@ class Api:
         activity = state.get("activity", {})
         dismissed = set(state.get("dismissed_reviews", []))
         hidden_work = set(state.get("hidden_work_reviews", []))
+        all_ctx = store.load_context()
         projects = []
         for name in state.get("project_order", []):
             p = state.get("projects", {}).get(name)
@@ -466,6 +479,17 @@ class Api:
                 r for r in (flags + list(dig.get("review", [])))
                 if _review_key(name, r) not in dismissed
             ]
+            # Compact scheduled-launch summary for the sidebar (full detail is
+            # fetched via get_context when a project is selected).
+            active = (all_ctx.get(name) or {}).get("active_launch")
+            launch = None
+            if active:
+                launch = {
+                    "type": active.get("type", ""),
+                    "title": active.get("title", ""),
+                    "target_date": active.get("target_date", ""),
+                    "days_until": _days_until(active.get("target_date", "")),
+                }
             projects.append({
                 "name": name,
                 "display": p.get("display") or name,
@@ -482,6 +506,7 @@ class Api:
                     u for u in (ai_work.get(name) or {}).get("items", [])
                     if u.get("id") not in hidden_work
                 ],
+                "launch": launch,
             })
         return {
             "projects": projects,
@@ -549,7 +574,8 @@ class Api:
                 return self._build_view()
             self._refreshing = True
         try:
-            new_state = perform_refresh(self.config, self.sources, self.state)
+            with debuglog.timer("refresh: perform_refresh (provider API calls)"):
+                new_state = perform_refresh(self.config, self.sources, self.state)
             self.state = new_state
             manager.update_activity(self.state)  # fold in live activity
             store.save_state(self.state)
@@ -763,9 +789,11 @@ class Api:
         cached = self.state.get("analysis", {}).get(slug)
         if (cached and head and cached.get("head") == head
                 and cached.get("analyzer_version") == analysis._ANALYZER_VERSION):
+            debuglog.log(f"analyze[{slug}]: cache hit (HEAD unchanged) — no work")
             return self._overlay_ai(slug, cached)
         try:
-            result = analysis.analyze_repo(path, slug)  # static only — no API
+            with debuglog.timer(f"analyze[{slug}]: on-demand static analysis (cache miss)"):
+                result = analysis.analyze_repo(path, slug)  # static only — no API
         except Exception as e:
             return {"error": f"analysis failed: {e}"}
         self.state.setdefault("analysis", {})[slug] = result
@@ -786,10 +814,12 @@ class Api:
 
     def _ensure_analyses(self) -> None:
         if not self._analysis_lock.acquire(blocking=False):
+            debuglog.log("analysis: pass already running — skipping")
             return  # one analyzer at a time is enough
         try:
             links = localrepo.links_for_machine(self.state)
-            changed = False
+            changed = 0
+            skipped = 0
             for slug, path in links.items():
                 try:
                     head = analysis.git_head(Path(path))
@@ -798,13 +828,16 @@ class Api:
                 cached = self.state.get("analysis", {}).get(slug)
                 if (cached and head and cached.get("head") == head
                         and cached.get("analyzer_version") == analysis._ANALYZER_VERSION):
+                    skipped += 1
                     continue  # up to date
                 try:
-                    result = analysis.analyze_repo(path, slug)  # static only
+                    with debuglog.timer(f"analysis: analyze {slug}"):
+                        result = analysis.analyze_repo(path, slug)  # static only
                 except Exception:
                     continue
                 self.state.setdefault("analysis", {})[slug] = result
-                changed = True
+                changed += 1
+            debuglog.log(f"analysis: background pass done — {changed} analyzed, {skipped} up-to-date")
             if changed:
                 store.save_state(self.state)
         finally:

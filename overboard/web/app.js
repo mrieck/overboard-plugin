@@ -237,8 +237,11 @@ async function refresh() {
   btn.disabled = true;
   btn.textContent = "Refreshing…";
   _refreshingNow = true;
+  const t0 = performance.now();
+  console.log("[overboard] refresh: calling /api/refresh (provider API calls happen server-side)…");
   try {
     const v = await callView("refresh");
+    console.log(`[overboard] refresh: /api/refresh returned in ${(performance.now() - t0).toFixed(0)} ms`);
     if (v) { VIEW = v; render(); }
     // New commits may have moved a clone's HEAD — re-pull the analyses too.
     const proj = currentProject();
@@ -356,6 +359,8 @@ function projectRow(proj) {
   }
   main.appendChild(meta);
 
+  if (proj.launch) main.appendChild(launchLine(proj.launch));
+
   row.appendChild(main);
   row.appendChild(activityGrid(proj.daily_counts)); // 30-day GitHub-style grid
   return row;
@@ -378,6 +383,27 @@ function chipMini(proj) {
     c.textContent = "no data";
   }
   return c;
+}
+
+// A compact scheduled-launch line for the sidebar row: rocket + label + a
+// countdown that turns amber when the date is within a week / overdue.
+function launchLine(l) {
+  const wrap = el("div", "prow-launch");
+  wrap.appendChild(el("span", "prow-launch-icon", "🚀"));
+  const label = l.title || l.type || "Launch";
+  wrap.appendChild(el("span", "prow-launch-label", label));
+
+  const d = l.days_until;
+  const c = el("span", "prow-launch-when");
+  if (d == null) { c.textContent = l.target_date || "no date"; c.classList.add("muted"); }
+  else if (d < 0) { c.textContent = `overdue ${Math.abs(d)}d`; c.classList.add("overdue"); }
+  else if (d === 0) { c.textContent = "today"; c.classList.add("soon"); }
+  else if (d === 1) { c.textContent = "tomorrow"; c.classList.add("soon"); }
+  else { c.textContent = `in ${d}d`; if (d <= 7) c.classList.add("soon"); }
+  wrap.appendChild(c);
+
+  wrap.title = [l.type, l.title, l.target_date].filter(Boolean).join(" · ");
+  return wrap;
 }
 
 // ---- 30-day activity grid (GitHub-style, replaces the commit bars) ---------
@@ -947,9 +973,12 @@ async function loadAnalyses(proj) {
   ANALYSES = {};
   for (const r of locals) ANALYSES[r.slug] = { tab: "overview", data: null, error: null, loading: true };
   renderAnalyses();
+  console.log(`[overboard] analyses: requesting static analysis for ${locals.length} local repo(s) of ${proj.name}`);
   await Promise.all(locals.map(async (r) => {
     try {
+      const t0 = performance.now();
       const data = await call("analyze", { slug: r.slug });
+      console.log(`[overboard] analyses: ${r.slug} → ${(performance.now() - t0).toFixed(0)} ms`);
       if (SELECTED !== proj.name || !ANALYSES[r.slug]) return; // switched away
       if (data && data.error) ANALYSES[r.slug] = { ...ANALYSES[r.slug], error: data.error, loading: false };
       else ANALYSES[r.slug] = { ...ANALYSES[r.slug], data, loading: false };

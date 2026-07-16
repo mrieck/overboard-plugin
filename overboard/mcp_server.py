@@ -466,15 +466,23 @@ def launch_dashboard():
     return its URL. Open this in a browser to see everything."""
     app_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.py")
     url = f"http://localhost:{DASHBOARD_PORT}"
+    # Server output (including refresh/analysis timing from overboard.debuglog)
+    # goes to a log file the user can `tail -f`, instead of being thrown away.
+    log_path = os.path.join(os.path.expanduser("~"), ".cache", "overboard", "dashboard.log")
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        logf = open(log_path, "a", buffering=1)
+    except OSError:
+        logf = subprocess.DEVNULL
     try:
         subprocess.Popen(
             [sys.executable, app_py, "--serve", "--port", str(DASHBOARD_PORT)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=logf, stderr=logf,
             start_new_session=True,
         )
     except OSError as e:
         return {"error": f"could not launch dashboard: {e}", "url": url}
-    return {"url": url, "note": "dashboard starting; open the URL in a browser"}
+    return {"url": url, "note": f"dashboard starting; logs → {log_path}"}
 
 
 # ============================ MCP tool table ===============================

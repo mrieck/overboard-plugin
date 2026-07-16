@@ -13,7 +13,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from overboard import diagram
+from overboard import debuglog, diagram
 
 # Directories we never scan.
 _SKIP_DIRS = {
@@ -465,9 +465,18 @@ def analyze_repo(path: str, name: str = "") -> dict:
     *prose* is written later by the /overboard agent into ai.json; `manifest`
     is returned so the agent has the digest it needs to write it."""
     root = Path(path)
-    manifest = build_manifest(root)
-    prompts = scan_prompts(root)
-    db = scan_db_schema(root)
+    label = name or root.name
+    with debuglog.timer(f"  analyze[{label}]: build manifest (walk files)"):
+        manifest = build_manifest(root)
+    with debuglog.timer(f"  analyze[{label}]: scan prompts"):
+        prompts = scan_prompts(root)
+    with debuglog.timer(f"  analyze[{label}]: scan db schema"):
+        db = scan_db_schema(root)
+    with debuglog.timer(f"  analyze[{label}]: build diagrams"):
+        diagrams = {
+            "er": diagram.er_diagram(db),
+            "architecture": diagram.architecture_graph(manifest, label),
+        }
 
     return {
         "head": git_head(root),
@@ -476,10 +485,7 @@ def analyze_repo(path: str, name: str = "") -> dict:
         "architecture": None,  # filled by the agent (ai.json)
         "prompts": prompts,
         "db": db,
-        "diagrams": {
-            "er": diagram.er_diagram(db),
-            "architecture": diagram.architecture_graph(manifest, name or root.name),
-        },
+        "diagrams": diagrams,
         "structure": manifest["structure"],
         "stats": {"files": manifest["total_files"], "by_ext": manifest["top_exts"]},
         "manifest_digest": manifest_digest(manifest),

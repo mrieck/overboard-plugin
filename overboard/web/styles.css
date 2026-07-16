@@ -88,6 +88,20 @@ html, body {
 .chip-mini.idle { color: var(--muted); }
 .prow-review { color: var(--amber); font-size: 11px; font-weight: 600; }
 
+/* Scheduled-launch line under the meta row in a sidebar project row. */
+.prow-launch {
+  display: flex; align-items: center; gap: 5px; margin-top: 4px;
+  font-size: 11px; color: var(--muted);
+}
+.prow-launch-icon { flex: none; font-size: 10px; }
+.prow-launch-label {
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.prow-launch-when { flex: none; font-weight: 600; }
+.prow-launch-when.soon { color: var(--amber); }
+.prow-launch-when.overdue { color: var(--red); }
+.prow-launch-when.muted { color: var(--muted); font-weight: 400; }
+
 /* ---- 30-day activity grid ------------------------------------------------- */
 .grid {
   display: grid;
