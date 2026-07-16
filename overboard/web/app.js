@@ -934,7 +934,7 @@ function syncIcon(sync) {
 const AN_TABS = [
   ["overview", "Overview"],
   ["prompts", "Prompts"],
-  ["setup", "Setup & run"],
+  ["setup", "Run & Deploy"],
   ["snippets", "Snippets"],
   ["db", "Data shape"],
 ];
@@ -1113,8 +1113,8 @@ function setupTab(d) {
   const frag = document.createElement("div");
   if (!d.setup) {
     frag.appendChild(note(VIEW.agent_has_run
-      ? "No setup/run instructions yet."
-      : "Run /overboard — your assistant will write how to install and run this project."));
+      ? "No run/deploy steps yet."
+      : "Run /overboard — your assistant will write the steps to run, deploy, or try this project (the human actions, not local-dev setup)."));
     return frag;
   }
   const pre = document.createElement("pre");

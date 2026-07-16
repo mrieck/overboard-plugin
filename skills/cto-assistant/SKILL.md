@@ -189,9 +189,12 @@ The `repo-analyst` subagent does the extraction (its own instructions define
 what a *real* prompt is vs plumbing, how to write setup/run, which snippets to
 pick, and the architecture summary). Your job is to spawn it for the right repos
 and persist what it returns. If you ever do it yourself instead of delegating,
-hold the same bar: real prompts only (no regexes/SQL/README prose), concrete
-install-and-run steps, a few genuinely useful snippets, and a cautious 2–4
-sentence architecture summary (+ optional Mermaid `flowchart`). You can still
+hold the same bar: real prompts only (no regexes/SQL/README prose), **operator
+run/deploy/try steps** (the human-in-the-loop actions to ship or test it — deploy
++ secret/env commands for its host, or a plugin's marketplace-add/install/test
+workflow — NOT local-dev bootstrap or the inside of scripts Claude already wrote),
+a few genuinely useful snippets, and a cautious 2–4 sentence architecture summary
+(+ optional Mermaid `flowchart`). You can still
 call `get_repo_analysis(slug)` for the static structure/DB shape as context.
 
 ## Standups (when the CTO just asks)

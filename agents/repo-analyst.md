@@ -31,14 +31,32 @@ invent.
    - Each item: `{name, text, file, line, dynamic, note}` (`note` optional, e.g.
      "sent as the system prompt for the review step").
 
-2. **setup** — a concise **install & run** guide as plain text / simple
-   markdown, grounded in the README, the manifest for **whatever stack this is**,
-   entrypoints, and `.env.example`. Detect the stack from its real manifest —
-   e.g. `package.json` (npm/yarn/pnpm), `pyproject.toml`/`requirements.txt` (pip/
-   poetry/uv), `pom.xml`/`build.gradle(.kts)` (Maven/Gradle), `*.csproj`/`*.sln`
-   (`dotnet`), `go.mod` (`go`), `Cargo.toml` (`cargo`), `composer.json`
-   (Composer), `Gemfile` (Bundler), `Makefile`/`Dockerfile`. Give the real
-   commands for THAT toolchain and any required env vars. A few lines is ideal.
+2. **setup** — write this for the **operator (the CTO), not a new developer
+   onboarding a laptop**. Answer *"what do I have to do to run, deploy, or try
+   what was built?"* — the handful of **human-in-the-loop actions**: enter a
+   secret, add an env var, trigger a deploy, run a worker/migration once, or the
+   install/test workflow. High-level and short. **Detect the delivery target**
+   from the repo and speak to THAT:
+   - **Deployed service** — `railway.json`/`railway.toml`/`Procfile` (Railway),
+     `vercel.json` (Vercel), `fly.toml` (Fly), `render.yaml` (Render),
+     `Dockerfile`/compose, `.github/workflows` (CI/CD): give the real deploy +
+     config commands and *where secrets go* — e.g.
+     `railway variables --set "GITHUB_TOKEN=…" --service worker`, `vercel --prod`.
+     Say which secret the human must supply, on which service/dashboard.
+   - **Claude Code plugin** — `.claude-plugin/plugin.json`, `commands/`,
+     `.mcp.json`: how to add the marketplace, install the plugin, and the
+     test/use workflow (the `/command`s to try) — not how to build it.
+   - **CLI / library** — a `bin`, a published package: the one-liner to install
+     and use it, or how to publish a release.
+   - **Local app you just want to see**: the **single** command to run it and
+     eyeball a change — not the whole DB/venv/migrate bootstrap.
+
+   Two hard rules: **(a)** don't paste the *inside* of scripts Claude already
+   wrote — if a Makefile / deploy script / migration exists, give the high-level
+   command that invokes it (`make deploy`, `pnpm deploy`, `npm run migrate`), not
+   its inner steps; **(b)** lead with the actions only the human can do (enter
+   this key, click Deploy in the X dashboard, sign into Y) and skip anything
+   Claude does automatically.
 
 3. **snippets** — 2–5 **key code excerpts** a human could eyeball to understand
    the repo (the entrypoint, the core handler, a gnarly/important bit). Each:
@@ -70,7 +88,7 @@ End your turn with ONLY a fenced ```json block containing:
 {
   "slug": "<the slug you were given>",
   "prompts": [{"name": "...", "text": "...", "file": "...", "line": 12, "dynamic": false, "note": ""}],
-  "setup": "npm install\ncp .env.example .env  # needs STRIPE_KEY\nnpm run dev  -> localhost:3000",
+  "setup": "Deploys on Railway — web + worker + managed Postgres. The worker needs a GitHub token for code-search discovery:\n  railway variables --set \"GITHUB_TOKEN=github_pat_…\" --service worker\nThen redeploy: railway up. The web service needs no key.",
   "snippets": [{"title": "server entry", "file": "src/main.ts", "line": 1, "code": "...", "note": ""}],
   "architecture": "Two-sentence summary…",
   "mermaid": "",
