@@ -164,6 +164,33 @@ html, body {
 
 .activity-btn { font-weight: 500; }
 
+/* ship celebration banner (see celebrate.js) */
+.ship-banner {
+  position: fixed;
+  left: 50%; top: 56%;
+  transform: translateX(-50%);
+  z-index: 61; pointer-events: none;
+  padding: 10px 20px;
+  background: var(--panel-2);
+  border: 1px solid var(--green);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 15px; font-weight: 600; white-space: nowrap;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45), 0 0 0 4px rgba(62, 207, 123, 0.12);
+  animation: ship-pop-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.4),
+             ship-fade-out 0.5s ease-in 2.0s forwards;
+}
+@keyframes ship-pop-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.85); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+@keyframes ship-fade-out {
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ship-banner { animation: ship-fade-out 0.5s ease-in 1.6s forwards; }
+}
+
 /* recent-activity popup */
 .modal-overlay {
   position: fixed; inset: 0;

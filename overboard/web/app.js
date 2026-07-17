@@ -1414,6 +1414,7 @@ function launchCard(project, ctx) {
   const ship = el("button", "btn small", "Mark shipped");
   ship.addEventListener("click", async () => {
     const c = await call("complete_launch", { project, status: "shipped" });
+    if (typeof celebrateShip === "function") celebrateShip(a.title || project);
     if (CONTEXT_FOR === project) buildContext(document.getElementById("context-body"), project, c || {});
   });
   actions.appendChild(edit);
@@ -1453,7 +1454,9 @@ function historyBlock(past) {
   wrap.appendChild(el("summary", "", `History (${past.length})`));
   for (const p of past) {
     const row = el("div", "hist-row");
-    row.appendChild(el("span", "hist-status " + (p.status === "cancelled" ? "cancelled" : "shipped"), p.status || "done"));
+    const shipped = p.status !== "cancelled";
+    row.appendChild(el("span", "hist-status " + (shipped ? "shipped" : "cancelled"),
+      (shipped ? "🎉 " : "") + (p.status || "done")));
     const label = `${p.type || ""} ${p.title || ""}`.trim() + (p.target_date ? " · " + p.target_date : "");
     row.appendChild(el("span", "", label));
     wrap.appendChild(row);
