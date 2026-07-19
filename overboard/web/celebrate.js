@@ -11,8 +11,8 @@
 (function () {
   const OVERLAY_ID = "ship-celebrate";
   const BURST_COUNT = 140;
-  const CLIMB_MS = 720;   // rocket bottom -> apex
-  const FALL_MS = 1700;   // confetti burst lifetime
+  const CLIMB_MS = 1050;  // rocket bottom -> apex (slower, more graceful climb)
+  const FALL_MS = 2600;   // confetti burst lifetime (lingers longer)
   const TOTAL_MS = CLIMB_MS + FALL_MS + 200;
 
   // Brand palette, read from the CSS custom properties so it tracks the theme.
@@ -107,12 +107,12 @@
         for (let i = 0; i < BURST_COUNT; i++) {
           const ang = Math.random() * Math.PI * 2;
           // Bias slightly upward so it fountains before gravity wins.
-          const speed = 3 + Math.random() * 7;
+          const speed = 2 + Math.random() * 5;
           parts.push({
             x, y,
             vx: Math.cos(ang) * speed,
-            vy: Math.sin(ang) * speed - 3,
-            g: 0.12 + Math.random() * 0.08,
+            vy: Math.sin(ang) * speed - 2.4,
+            g: 0.08 + Math.random() * 0.05,
             size: 4 + Math.random() * 5,
             color: colors[(Math.random() * colors.length) | 0],
             rot: Math.random() * Math.PI,
