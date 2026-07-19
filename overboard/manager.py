@@ -9,6 +9,33 @@ from overboard import events, store
 STOP_TYPES = ("Stop", "SubagentStop")
 _RECENT_KEEP = 25
 
+# A quiet project with a launch this close (or already overdue) still belongs on
+# the to-do list — a deadline is signal even when no code moved.
+LAUNCH_HORIZON_DAYS = 7
+
+
+def _launch_status(launch: dict) -> tuple[str | None, int | None]:
+    """('overdue'|'due_soon'|None, days_until) for an active launch. Only the
+    near/overdue window is actionable; a launch weeks out returns (None, days)."""
+    du = _days_until((launch or {}).get("target_date", ""))
+    if du is None:
+        return None, None
+    if du < 0:
+        return "overdue", du
+    if du <= LAUNCH_HORIZON_DAYS:
+        return "due_soon", du
+    return None, du
+
+
+def _slugs_flagged_since(since_ts: float) -> set[str]:
+    """Repo slugs the assistant has already flagged since `since_ts` — used to
+    keep a near/overdue-launch nudge to at most once a day instead of every loop."""
+    return {
+        e.get("repo_hint")
+        for e in events.read_events(since_ts=since_ts)
+        if e.get("type") == "flag" and e.get("repo_hint")
+    }
+
 
 def _days_until(date_str: str):
     try:
@@ -47,6 +74,11 @@ def pending_work(state: dict, ai: dict) -> list[dict]:
     work_reviews = ai.get("work_reviews", {})
     context = store.load_context()
 
+    # Anti-nag basis: a launch nudge only re-fires once the calendar day rolls
+    # over, so a still-open deadline doesn't spam the loop every 30 minutes.
+    midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    flagged_today = _slugs_flagged_since(midnight.timestamp())
+
     out = []
     for name, p in state.get("projects", {}).items():
         slugs = list(p.get("repos", {}))
@@ -77,7 +109,13 @@ def pending_work(state: dict, ai: dict) -> list[dict]:
         else:
             need_review = bool(newest_stop or any((p.get("daily_counts") or {}).values()))
 
-        if not (need_summary or need_digest or need_review):
+        # A near/overdue launch surfaces the project even when no code moved —
+        # but only once a day (suppressed if it's already been flagged today).
+        launch = (context.get(name) or {}).get("active_launch")
+        launch_status, launch_days = _launch_status(launch) if launch else (None, None)
+        need_launch = bool(launch_status) and not any(s in flagged_today for s in slugs)
+
+        if not (need_summary or need_digest or need_review or need_launch):
             continue
         reasons = []
         if need_summary:
@@ -86,12 +124,16 @@ def pending_work(state: dict, ai: dict) -> list[dict]:
             reasons.append("new finished work")
         if need_review:
             reasons.append("recent work to review")
+        if need_launch:
+            reasons.append(f"launch {launch_status}"
+                           + (f" ({abs(launch_days)}d)" if launch_days is not None else ""))
         item = {
             "project": name,
             "repos": slugs,
             "need_summary": bool(need_summary),
             "need_digest": bool(need_digest),
             "need_review": bool(need_review),
+            "need_launch": need_launch,
             "review_since": {s: basis_heads.get(s) for s in slugs},
             "recent_review_titles": [
                 u.get("title", "") for u in review.get("items", [])[:3]
@@ -102,16 +144,21 @@ def pending_work(state: dict, ai: dict) -> list[dict]:
         }
         # Inline the active launch so the agent can ground its prose without a
         # get_project_context round-trip (that tool still has goals/history/vision).
-        launch = (context.get(name) or {}).get("active_launch")
         if launch:
             item["launch"] = {
                 "type": launch.get("type", ""),
                 "title": launch.get("title", ""),
                 "target_date": launch.get("target_date", ""),
-                "days_until": _days_until(launch.get("target_date", "")),
+                "days_until": launch_days,
+                "status": launch_status,  # 'overdue' | 'due_soon' | None (further out)
             }
         out.append(item)
-    out.sort(key=lambda w: w["newest_stop_ts"], reverse=True)
+    # Overdue launches first (a quiet-but-late project must not sink below busy
+    # ones), then newest activity.
+    out.sort(
+        key=lambda w: ((w.get("launch") or {}).get("status") == "overdue", w["newest_stop_ts"]),
+        reverse=True,
+    )
 
     # Grouping to-do: if the live repo set isn't covered by the assistant's last
     # grouping (new/removed repos, or none set yet), ask it to (re)group. Until it

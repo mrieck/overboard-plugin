@@ -38,11 +38,17 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
    - If **`need_review`**: build 1–3 "recent work" cards from the real diffs and
      **`record_work_review(project, units, reviewed_heads)`** — see *Reviewing
      recent work* below.
+   - If **`need_launch`**: the project's active launch is **overdue or due within
+     7 days**, and this fires *even when no code moved* — so a quiet-but-late
+     project reaches you here. Check the launch `goals` against recent commits/
+     finished work; if they look unmet or the date has slipped, **`flag_for_review`
+     ONE specific thing** (see *Launch & vision*). The nudge self-suppresses for
+     the rest of the day once you've flagged that project, so don't re-flag.
    - **Refresh the dashboard panels** for each *local* repo (see *Maintaining
      the panels* below) — real prompts, setup/run, snippets, architecture.
    - **Mind the CTO's plans**: each pending entry already carries `launch`
-     (type, title, days_until) — let it shape what you write and flag. Call
-     `get_project_context(project)` only when you need the full plan — goals,
+     (type, title, days_until, status) — let it shape what you write and flag.
+     Call `get_project_context(project)` only when you need the full plan — goals,
      push-back history, or the vision text (see *Launch & vision* below).
 4. **Flags are signal, not a changelog.** Use **`flag_for_review(project, note)`**
    ONLY for things the CTO must know or act on:
@@ -157,11 +163,13 @@ Use it to make your output *matter to the CTO*:
 
 - Ground summaries/digests in the goal that's actually in flight ("moving toward
   the {days_until}-day {type}: {title}").
-- **Flag** (via `flag_for_review`) when the active launch is **near** (say
-  `days_until` ≤ 7, or overdue) and its **goals look unmet** given recent commits/
-  finished work, or when the plan has **slipped** (push-back history). One
-  specific, useful flag — e.g. "MVP ships in 4 days but the checkout flow goal
-  isn't in any commit yet." Don't nag if things look on track.
+- **Flag** (via `flag_for_review`) when the active launch is **near** (`days_until`
+  ≤ 7, or overdue) and its **goals look unmet** given recent commits/finished work,
+  or when the plan has **slipped** (push-back history). One specific, useful flag —
+  e.g. "MVP ships in 4 days but the checkout flow goal isn't in any commit yet."
+  Don't nag if things look on track. `get_pending_work` now raises `need_launch`
+  for exactly this window (even on a silent project), so you'll be prompted — but
+  the judgement of whether to flag is still yours.
 - If there's no launch or vision set, just skip this — don't invent goals.
 
 ## Writing summaries (`set_project_summary`)
@@ -205,10 +213,12 @@ need attention. Short, direct, outcome-first — the CTO runs many projects at
 once. If a project is quiet, say so; never invent activity.
 
 Also read `get_project_context(project)` for each project and weave in the active
-launch — its type/title and `days_until` (e.g. "MVP 'Checkout' in 6 days"). This
-is the one place a **quiet** project's deadline surfaces (the update loop only
-sees active projects), so a near or overdue launch on a silent project is exactly
-the thing to call out. No launch set → say nothing about it.
+launch — its type/title and `days_until` (e.g. "MVP 'Checkout' in 6 days"). The
+update loop now surfaces near/overdue launches on their own (`need_launch`), but a
+standup should still call out **every** launch you can see — including one that's
+weeks out or already flagged today — since the CTO is asking for the whole picture.
+A near or overdue launch on an otherwise-silent project is exactly the thing to
+lead with. No launch set → say nothing about it.
 
 ## Where the data lives
 
