@@ -113,6 +113,10 @@ def load_sources(config: dict | None = None) -> list[dict]:
     gh = dict(cred.get("github") or {})
     if gh.get("enabled") and gh.get("token"):
         sources.append({"provider": "github", "workspace": None, "token": gh["token"]})
+    # Local-only tracking: no token — commits are read from local clones' git.
+    lg = dict(cred.get("localgit") or {})
+    if lg.get("enabled"):
+        sources.append({"provider": "localgit", "workspace": None})
     return sources
 
 

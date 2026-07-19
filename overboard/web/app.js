@@ -185,6 +185,8 @@ function _escCloseDiagram(e) { if (e.key === "Escape") closeDiagramModal(); }
 async function init() {
   wireControls();
   await loadView();
+  // No sources configured yet → guide the user through onboarding right away.
+  if (VIEW && !VIEW.has_sources) openWizard();
   // First paint shows cached state; then pull fresh data in the background.
   refresh();
   // Cheap periodic poll for live activity from the working Claudes (event-gated
@@ -308,11 +310,11 @@ function renderSidebar() {
     const wrap = document.createElement("div");
     wrap.className = "empty";
     const p = document.createElement("p");
-    p.textContent = "No sources yet — add a Bitbucket or GitHub token to get started.";
+    p.textContent = "No sources yet — track local clones with no key, or connect GitHub / Bitbucket.";
     const b = document.createElement("button");
     b.className = "btn small";
-    b.textContent = "Open Settings ⚙";
-    b.addEventListener("click", openSettings);
+    b.textContent = "Get started";
+    b.addEventListener("click", openWizard);
     wrap.appendChild(p);
     wrap.appendChild(b);
     host.appendChild(wrap);
@@ -795,9 +797,10 @@ function renderSettingsModal(s) {
         '<p class="subtle hint">Classic PAT with <code>repo</code> scope (or fine-grained: repository contents + metadata, read). Pulls the repos you own.</p>' +
       '</fieldset>' +
       '<fieldset class="src">' +
-        '<legend>Local folders</legend>' +
+        '<legend><label><input type="checkbox" id="lg-enabled"> Local git (no API key)</label></legend>' +
+        '<p class="subtle hint">Track every clone under the folders below by reading its <code>git log</code> — no token needed. A repo also on GitHub/Bitbucket keeps that as its commit source.</p>' +
         '<label>Where your clones live <input type="text" id="local-roots" placeholder="~/Sites, ~/dev/work"></label>' +
-        '<p class="subtle hint">Comma-separated. Common folders (~/Sites, ~/projects, ~/code, …) are searched automatically — add any others here so local analysis finds your repos.</p>' +
+        '<p class="subtle hint">Comma-separated. Common folders (~/Sites, ~/projects, ~/code, …) are searched automatically — add any others here.</p>' +
       '</fieldset>' +
       '<div class="settings-actions"><span id="settings-status" class="subtle"></span>' +
       '<button class="btn" data-save>Save &amp; refresh</button></div>' +
@@ -811,6 +814,7 @@ function renderSettingsModal(s) {
   box.querySelector("#bb-token").placeholder = s.bitbucket.token_set ? "•••• saved — blank keeps it" : "paste token";
   box.querySelector("#gh-enabled").checked = s.github.enabled;
   box.querySelector("#gh-token").placeholder = s.github.token_set ? "•••• saved — blank keeps it" : "paste token";
+  box.querySelector("#lg-enabled").checked = !!(s.localgit && s.localgit.enabled);
   box.querySelector("#local-roots").value = (s.local_roots || []).join(", ");
 
   box.querySelector("[data-close]").addEventListener("click", closeSettings);
@@ -841,6 +845,7 @@ async function saveSettings(box) {
       enabled: box.querySelector("#gh-enabled").checked,
       token: box.querySelector("#gh-token").value,
     },
+    localgit: { enabled: box.querySelector("#lg-enabled").checked },
     local_roots: box.querySelector("#local-roots").value.split(",").map((r) => r.trim()).filter(Boolean),
   };
   const v = await callView("save_settings", payload);
@@ -853,6 +858,278 @@ async function saveSettings(box) {
   } else {
     status.textContent = "Save failed — restart the dashboard server and retry.";
     saveBtn.disabled = false;
+  }
+}
+
+// ---- first-run onboarding wizard -------------------------------------------
+let WIZARD = null;
+
+function openWizard() {
+  WIZARD = {
+    idx: 0,
+    prov: { localgit: false, github: false, bitbucket: false },
+    bb: { workspace: "", email: "", token: "" },
+    gh: { token: "" },
+    roots: null,   // detect_roots result, cached after first load
+    checked: {},   // root -> bool
+    extra: "",
+    err: "",
+  };
+  renderWizard();
+}
+
+function _wizardEsc(e) { if (e.key === "Escape") closeWizard(); }
+function closeWizard() {
+  const m = document.getElementById("wizard-modal");
+  if (m) m.remove();
+  document.removeEventListener("keydown", _wizardEsc);
+}
+
+// Which steps are live depends on the chosen providers (token step only when an
+// API provider is picked).
+function wizSteps() {
+  const s = ["path"];
+  if (WIZARD.prov.bitbucket || WIZARD.prov.github) s.push("tokens");
+  s.push("roots", "finish");
+  return s;
+}
+
+function selectedRoots() {
+  const roots = Object.keys(WIZARD.checked).filter((r) => WIZARD.checked[r]);
+  const extra = (WIZARD.extra || "").split(",").map((s) => s.trim()).filter(Boolean);
+  return [...new Set([...roots, ...extra])];
+}
+
+function renderWizard() {
+  closeWizard();
+  const ov = el("div", "modal-overlay");
+  ov.id = "wizard-modal";
+  const box = el("div", "modal wizard");
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+  document.addEventListener("keydown", _wizardEsc);
+  drawWizard(box);
+}
+
+function drawWizard(box) {
+  const steps = wizSteps();
+  if (WIZARD.idx >= steps.length) WIZARD.idx = steps.length - 1;
+  const step = steps[WIZARD.idx];
+  box.textContent = "";
+
+  const head = el("div", "modal-head");
+  head.appendChild(el("h3", null, "Welcome to Overboard"));
+  const skip = el("button", "btn ghost small", "Skip for now");
+  skip.addEventListener("click", closeWizard);
+  head.appendChild(skip);
+  box.appendChild(head);
+
+  const body = el("div", "settings-body wizard-body");
+  box.appendChild(body);
+
+  const prog = el("div", "wiz-prog");
+  steps.forEach((_s, i) => prog.appendChild(
+    el("span", "wiz-dot" + (i === WIZARD.idx ? " on" : (i < WIZARD.idx ? " done" : "")))));
+  body.appendChild(prog);
+
+  if (step === "path") drawPathStep(body);
+  else if (step === "tokens") drawTokenStep(body);
+  else if (step === "roots") drawRootsStep(body);
+  else if (step === "finish") drawFinishStep(body);
+
+  if (WIZARD.err) body.appendChild(el("p", "wiz-err", WIZARD.err));
+
+  const nav = el("div", "wizard-nav");
+  const back = el("button", "btn ghost small", "Back");
+  back.disabled = WIZARD.idx === 0;
+  back.addEventListener("click", () => { captureStep(step); WIZARD.err = ""; WIZARD.idx--; renderWizard(); });
+  nav.appendChild(back);
+  nav.appendChild(el("span", "wiz-spacer"));
+
+  if (step === "finish") {
+    const fin = el("button", "btn", "Finish & start tracking");
+    fin.addEventListener("click", () => finishWizard(fin));
+    nav.appendChild(fin);
+  } else {
+    const next = el("button", "btn", "Next");
+    next.addEventListener("click", () => {
+      if (!captureStep(step)) { renderWizard(); return; }
+      WIZARD.err = ""; WIZARD.idx++; renderWizard();
+    });
+    nav.appendChild(next);
+  }
+  box.appendChild(nav);
+}
+
+// Reads the current step's inputs into WIZARD and validates. Returns false (with
+// WIZARD.err set) to block advancing.
+function captureStep(step) {
+  if (step === "path") {
+    if (!(WIZARD.prov.localgit || WIZARD.prov.github || WIZARD.prov.bitbucket)) {
+      WIZARD.err = "Pick at least one way to track your projects."; return false;
+    }
+    return true;
+  }
+  if (step === "tokens") {
+    if (WIZARD.prov.github) {
+      WIZARD.gh.token = (document.getElementById("wiz-gh-token").value || "").trim();
+      if (!WIZARD.gh.token) { WIZARD.err = "Paste your GitHub token, or go back and unselect GitHub."; return false; }
+    }
+    if (WIZARD.prov.bitbucket) {
+      WIZARD.bb.workspace = (document.getElementById("wiz-bb-workspace").value || "").trim();
+      WIZARD.bb.email = (document.getElementById("wiz-bb-email").value || "").trim();
+      WIZARD.bb.token = (document.getElementById("wiz-bb-token").value || "").trim();
+      if (!WIZARD.bb.workspace || !WIZARD.bb.email || !WIZARD.bb.token) {
+        WIZARD.err = "Bitbucket needs workspace, email, and token."; return false;
+      }
+    }
+    return true;
+  }
+  if (step === "roots") {
+    const ex = document.getElementById("wiz-extra-roots");
+    if (ex) WIZARD.extra = ex.value;
+    return true;
+  }
+  return true;
+}
+
+function drawPathStep(body) {
+  body.appendChild(el("p", "wiz-lead",
+    "How should Overboard track your projects? Pick any that apply — you can change this later in Settings."));
+  const cards = el("div", "path-cards");
+  cards.appendChild(pathCard("localgit", "Local only", "★ zero setup",
+    "Reads commits straight from your local clones (git log). No API key — the fastest way to start, great on a fresh machine."));
+  cards.appendChild(pathCard("github", "GitHub", "",
+    "Track the repos you own on GitHub via a personal access token — includes commits pushed from any machine."));
+  cards.appendChild(pathCard("bitbucket", "Bitbucket", "",
+    "Track a Bitbucket workspace via your Atlassian email + an API token."));
+  body.appendChild(cards);
+}
+
+function pathCard(key, title, tag, desc) {
+  const c = el("div", "path-card" + (WIZARD.prov[key] ? " sel" : ""));
+  c.addEventListener("click", () => { WIZARD.prov[key] = !WIZARD.prov[key]; WIZARD.err = ""; renderWizard(); });
+  const h = el("div", "path-card-h");
+  h.appendChild(el("span", "path-card-check", WIZARD.prov[key] ? "☑" : "☐"));
+  h.appendChild(el("span", "path-card-title", title));
+  if (tag) h.appendChild(el("span", "path-card-tag", tag));
+  c.appendChild(h);
+  c.appendChild(el("p", "path-card-desc subtle", desc));
+  return c;
+}
+
+function drawTokenStep(body) {
+  body.appendChild(el("p", "wiz-lead", "Add your access token(s) — follow the steps, then paste below."));
+  if (WIZARD.prov.github) body.appendChild(ghTokenPanel());
+  if (WIZARD.prov.bitbucket) body.appendChild(bbTokenPanel());
+}
+
+function ghTokenPanel() {
+  const fs = document.createElement("fieldset");
+  fs.className = "src";
+  fs.innerHTML =
+    "<legend>GitHub</legend>" +
+    '<ol class="token-steps">' +
+      '<li>Open <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">GitHub → Settings → Developer settings → Personal access tokens (fine-grained)</a>.</li>' +
+      "<li><b>Repository access</b>: the repos you want tracked. <b>Permissions → Repository</b>: <code>Contents: Read-only</code> + <code>Metadata: Read-only</code>.</li>" +
+      '<li>Prefer classic? <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">Create one</a> with the <code>repo</code> scope.</li>' +
+      "<li>Copy the token and paste it here.</li>" +
+    "</ol>" +
+    '<label>Personal access token <input type="password" id="wiz-gh-token" placeholder="github_pat_… / ghp_…"></label>';
+  fs.querySelector("#wiz-gh-token").value = WIZARD.gh.token || "";
+  return fs;
+}
+
+function bbTokenPanel() {
+  const fs = document.createElement("fieldset");
+  fs.className = "src";
+  fs.innerHTML =
+    "<legend>Bitbucket</legend>" +
+    '<ol class="token-steps">' +
+      '<li>Open <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">Atlassian account → Security → API tokens</a>.</li>' +
+      "<li>Click <b>Create API token</b>, name it “Overboard”, and copy it.</li>" +
+      "<li>Enter your workspace id and your Atlassian account email below.</li>" +
+    "</ol>" +
+    '<label>Workspace <input type="text" id="wiz-bb-workspace" placeholder="e.g. mrieck81"></label>' +
+    '<label>Email <input type="text" id="wiz-bb-email" placeholder="you@example.com"></label>' +
+    '<label>API token <input type="password" id="wiz-bb-token"></label>';
+  fs.querySelector("#wiz-bb-workspace").value = WIZARD.bb.workspace || "";
+  fs.querySelector("#wiz-bb-email").value = WIZARD.bb.email || "";
+  fs.querySelector("#wiz-bb-token").value = WIZARD.bb.token || "";
+  return fs;
+}
+
+function drawRootsStep(body) {
+  body.appendChild(el("p", "wiz-lead",
+    "Where do your project folders live? We scan these for git repos" +
+    (WIZARD.prov.localgit ? " (for local commit tracking and code analysis)." : " (for local code analysis).")));
+  if (WIZARD.roots === null) {
+    body.appendChild(el("p", "subtle", "Scanning for your repos…"));
+    call("detect_roots").then((r) => {
+      WIZARD.roots = (r && r.candidates) || [];
+      for (const c of WIZARD.roots) if (!(c.root in WIZARD.checked)) WIZARD.checked[c.root] = true;
+      renderWizard();
+    });
+    return;
+  }
+  if (!WIZARD.roots.length) body.appendChild(el("p", "subtle", "No repos auto-detected — add a folder below."));
+  const list = el("div", "root-list");
+  for (const c of WIZARD.roots) {
+    const row = el("label", "root-row");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = !!WIZARD.checked[c.root];
+    cb.addEventListener("change", () => { WIZARD.checked[c.root] = cb.checked; });
+    row.appendChild(cb);
+    row.appendChild(el("span", "root-path", c.root));
+    row.appendChild(el("span", "root-count subtle", c.repo_count + " repo" + (c.repo_count === 1 ? "" : "s")));
+    list.appendChild(row);
+  }
+  body.appendChild(list);
+  const add = el("label", "ctx-field", "Add another folder");
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.id = "wiz-extra-roots"; inp.placeholder = "~/work, /opt/src"; inp.value = WIZARD.extra || "";
+  add.appendChild(inp);
+  body.appendChild(add);
+}
+
+function drawFinishStep(body) {
+  body.appendChild(el("p", "wiz-lead", "Ready to go — Overboard will start tracking with:"));
+  const modes = [];
+  if (WIZARD.prov.localgit) modes.push("Local git (no key)");
+  if (WIZARD.prov.github) modes.push("GitHub");
+  if (WIZARD.prov.bitbucket) modes.push("Bitbucket");
+  const ul = el("ul", "wiz-summary");
+  ul.appendChild(el("li", null, "Sources: " + modes.join(", ")));
+  const roots = selectedRoots();
+  ul.appendChild(el("li", null, "Folders: " + (roots.length ? roots.join(", ") : "common defaults (~/Sites, ~/code, …)")));
+  body.appendChild(ul);
+  if (WIZARD.prov.localgit) {
+    body.appendChild(el("p", "subtle",
+      "Local-only reads commits from your clones on this machine — perfect for a new setup with no tokens yet. Add GitHub/Bitbucket later to include commits pushed from elsewhere."));
+  }
+}
+
+async function finishWizard(btn) {
+  btn.disabled = true; btn.textContent = "Setting up…";
+  const payload = {
+    bitbucket: WIZARD.prov.bitbucket
+      ? { enabled: true, workspace: WIZARD.bb.workspace, email: WIZARD.bb.email, token: WIZARD.bb.token }
+      : { enabled: false },
+    github: WIZARD.prov.github ? { enabled: true, token: WIZARD.gh.token } : { enabled: false },
+    localgit: { enabled: !!WIZARD.prov.localgit },
+  };
+  // Only send roots if the user actually got to choose (avoid clobbering saved
+  // roots when the scan hadn't finished).
+  if (selectedRoots().length || WIZARD.roots) payload.local_roots = selectedRoots();
+  const v = await callView("save_settings", payload);
+  if (v) {
+    VIEW = v; closeWizard(); render();
+    const p = currentProject();
+    if (p) loadAnalyses(p);
+  } else {
+    WIZARD.err = "Setup failed — restart the dashboard server and retry.";
+    btn.disabled = false; btn.textContent = "Finish & start tracking";
+    renderWizard();
   }
 }
 

@@ -118,7 +118,7 @@ step, `fetch('/api/<method>')` to the Python `Api`. Mermaid is vendored offline.
 There are **no commit bar charts** — the day grid replaced them; don't bring bars
 back.
 
-## Sources (Bitbucket + GitHub, merged)
+## Sources (Bitbucket + GitHub + local git, merged)
 
 Overboard reads repos from **multiple providers at once**. The provider layer is
 isolated so adding a provider is mechanical:
@@ -139,10 +139,34 @@ isolated so adding a provider is mechanical:
   (shown as a `bb`/`gh` tag). `mcp_server.get_commits` dispatches by provider.
 - `localrepo` matches clones by **host** (`PROVIDER_HOSTS`) so github.com and
   bitbucket.org clones under `local_roots` are both found.
+- `overboard/localgit.py` — a **key-free** provider that reads commits/diffs from
+  local clones via `git log`/`git diff` (stdlib subprocess, reusing
+  `localrepo._git`). It can't enumerate repos from an API, so instead of
+  `active_repos`, `localrepo.discover_localgit(roots)` finds every clone under the
+  roots (remote slug when present, else dir name) and `app._inject_localgit_repos`
+  merges them into the refresh. A localgit source emits a `(None, None)` wildcard
+  matcher so discovery/`local_links` include remote-less repos too. A repo that is
+  *also* on GitHub/Bitbucket keeps the API as its commit source and just gains
+  `also_providers:["localgit"]` + a local `path`. The repo state record and the
+  `mcp_server.get_commits`/`get_recent_diff` repo dicts carry `path` for dispatch.
 
 **To add another provider:** new client module (same interface) → add it to
 `providers.py` dispatch + `PROVIDER_HOSTS` → add a source shape to
 `store.load_sources` + the Settings panel.
+
+## Onboarding (first-run wizard)
+
+The dashboard boots with no credentials. When `get_view.has_sources` is false the
+frontend auto-opens a stepped wizard (`app.js` `openWizard`/`renderWizard`,
+reusing the `.modal` shell): pick tracking modes (Local-only / GitHub /
+Bitbucket, any combination), guided token steps with links + scopes for the API
+providers, then a roots-confirm step. `Api.detect_roots` suggests candidate root
+folders by decoding `~/.claude/projects` working-dir names (lossy `/`→`-`
+encoding — decode-then-`isdir`-validate + backtrack in `_decode_claude_dir`) plus
+`DEFAULT_ROOTS`, each with a shallow repo count. The wizard's Finish reuses
+`save_settings` (the single credentials writer) with `localgit.enabled` +
+`local_roots`; the Settings modal exposes the same local-git toggle for returning
+users.
 
 ## Credentials & setup
 

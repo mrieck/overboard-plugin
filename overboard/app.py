@@ -19,7 +19,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from overboard import analysis, debuglog, diagram, events, localrepo, manager, providers, store
+from overboard import analysis, debuglog, diagram, events, localgit, localrepo, manager, providers, store
 
 APP_TITLE = "Overboard"
 ICON_NORMAL = "applications-development"
@@ -117,6 +117,38 @@ def _gather_active_repos(sources, sessions, cutoff) -> tuple[dict, list[str]]:
             else:
                 prev.setdefault("also_providers", []).append(r["provider"])
     return meta, errors
+
+
+def _inject_localgit_repos(repo_meta: dict, config: dict) -> int:
+    """Merge locally-discovered clones (local-only mode) into `repo_meta`. A slug
+    not already seen from an API source is added as a provider:'localgit' repo
+    (commits read from local git); a slug already present from Bitbucket/GitHub is
+    left as-is (that stays the commit source, so commits pushed from other
+    machines still count) and just records the local path + 'localgit' in
+    also_providers (hybrid). Returns how many new localgit repos were added."""
+    injected = 0
+    for d in localrepo.discover_localgit(localrepo.resolved_roots(config)):
+        slug, path, branch = d["slug"], d["path"], d.get("branch") or ""
+        prev = repo_meta.get(slug)
+        if prev is None:
+            # Bound updated_on to the head commit date so ordering/cutoff work.
+            try:
+                head = localgit.fetch_recent_commits(path, branch, 1)
+            except providers.ProviderError:
+                head = []
+            repo_meta[slug] = {
+                "provider": "localgit", "workspace": "", "slug": slug,
+                "branch": branch or "main", "path": path,
+                "updated_on": head[0]["date"] if head else "",
+            }
+            injected += 1
+        else:
+            prev["path"] = path
+            if prev.get("provider") != "localgit":
+                aps = prev.setdefault("also_providers", [])
+                if "localgit" not in aps:
+                    aps.append("localgit")
+    return injected
 
 
 def _resolve_grouping(slugs: list[str], old_state: dict) -> dict:
@@ -233,6 +265,10 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
 
     with debuglog.timer(f"refresh: list active repos ({len(sources)} source(s))"):
         repo_meta, source_errors = _gather_active_repos(sources, sessions, cutoff)
+    if any(s.get("provider") == "localgit" for s in sources):
+        with debuglog.timer("refresh: discover local clones (localgit)"):
+            n = _inject_localgit_repos(repo_meta, config)
+        debuglog.log(f"refresh: localgit injected {n} local-only repo(s)")
     projects, discovery = resolve_projects(config, repo_meta, old_state)
     new_state["discovery"] = discovery
     n_repos = sum(len(p["repos"]) for p in projects)
@@ -253,6 +289,8 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
             old_repo = old_repos.get(slug, {})
             base = {"provider": provider, "workspace": workspace, "branch": branch,
                     "also_providers": sorted(set(repo.get("also_providers") or []))}
+            if repo.get("path"):
+                base["path"] = repo["path"]  # localgit needs it to read commits/diffs
             session = sessions.get(provider)
             if session is None:
                 repos_state[slug] = {**old_repo, **base, "fetch_error": "provider not configured"}
@@ -395,6 +433,87 @@ def run_once() -> int:
         print(f"\nlast_error: {state['last_error']}")
     print(f"\nrefresh ok: {state['last_refresh_ok']}  state: {store.STATE_PATH}")
     return 0 if state["last_refresh_ok"] else 1
+
+
+def _tildify(path: str) -> str:
+    """Show an absolute path under $HOME as ~/… for a friendlier UI."""
+    home = str(Path.home())
+    if path == home or path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    return path
+
+
+def _decode_claude_dir(name: str) -> str | None:
+    """Decode a ~/.claude/projects dir name back to a real working directory.
+
+    Claude Code encodes the absolute cwd by replacing '/' with '-' (a leading
+    '/' becomes a leading '-'). That's lossy — a directory whose real name
+    contains '-' (e.g. `overboard-plugin`) is indistinguishable from a
+    separator. So we rebuild left-to-right against the filesystem, taking the
+    LONGEST '-'-joined run that is a real directory at each level. Returns the
+    resolved absolute path, or None if it can't be resolved to an existing dir."""
+    if not name.startswith("-"):
+        return None
+    segs = [s for s in name.split("-") if s]
+    if not segs:
+        return None
+    cur = Path("/")
+    i = 0
+    while i < len(segs):
+        best = None
+        acc = ""
+        for j in range(i, len(segs)):
+            acc = segs[j] if j == i else acc + "-" + segs[j]
+            if (cur / acc).is_dir():
+                best = (j, acc)
+        if best is None:
+            return None
+        cur = cur / best[1]
+        i = best[0] + 1
+    return str(cur)
+
+
+def _shallow_repo_count(root: str) -> int:
+    """How many git clones sit directly under `root` (root itself + immediate
+    children). One level only — cheap, so scanning many candidate roots is fast."""
+    base = Path(root)
+    n = 1 if (base / ".git").is_dir() else 0
+    try:
+        for child in base.iterdir():
+            if child.is_dir() and (child / ".git").is_dir():
+                n += 1
+    except OSError:
+        pass
+    return n
+
+
+def _detect_candidate_roots() -> list[dict]:
+    """Candidate clone roots (with a repo count each) for onboarding: the parents
+    of Claude Code's known working dirs (~/.claude/projects) plus the common
+    defaults and any already-saved roots. Only existing roots with ≥1 clone are
+    returned, most repos first, capped for a clean UI."""
+    roots: set[str] = set()
+    claude = Path.home() / ".claude" / "projects"
+    try:
+        entries = list(claude.iterdir())
+    except OSError:
+        entries = []
+    for d in entries:
+        wd = _decode_claude_dir(d.name)
+        if wd:
+            roots.add(str(Path(wd).parent))  # the folder that CONTAINS the clone
+    for r in localrepo.DEFAULT_ROOTS:
+        p = Path(os.path.expanduser(r))
+        if p.is_dir():
+            roots.add(str(p))
+    for r in (store.load_credentials().get("local_roots") or []):
+        p = Path(os.path.expanduser(r))
+        if p.is_dir():
+            roots.add(str(p))
+    out = [{"root": _tildify(r), "repo_count": _shallow_repo_count(r)} for r in roots]
+    out = [c for c in out if c["repo_count"] > 0]
+    out.sort(key=lambda c: c["repo_count"], reverse=True)
+    return out[:12]
 
 
 class Api:
@@ -627,14 +746,21 @@ class Api:
                 "token_set": bool(bb.get("token")),
             },
             "github": {"enabled": bool(gh.get("enabled")), "token_set": bool(gh.get("token"))},
+            # Local-only tracking (read git log from local clones, no API key).
+            "localgit": {"enabled": bool((cred.get("localgit") or {}).get("enabled"))},
             "has_any_source": bool(self.sources),
             # Machine-local extra folders to hunt for clones (on top of the common
             # defaults). Shown so the user can add non-standard locations.
             "local_roots": list(cred.get("local_roots") or []),
         }
 
+    def detect_roots(self) -> dict:
+        """Candidate project-root folders (with a repo count each) for the
+        onboarding wizard's 'where do your clones live' step. Read-only."""
+        return {"candidates": _detect_candidate_roots()}
+
     def save_settings(self, bitbucket: dict | None = None, github: dict | None = None,
-                      local_roots: list | None = None) -> dict:
+                      localgit: dict | None = None, local_roots: list | None = None) -> dict:
         """Write credentials.json (a blank token keeps the existing one),
         rebuild sources, rediscover local clones, and refresh."""
         cred = store.load_credentials()
@@ -659,6 +785,9 @@ class Api:
             tok = (github.get("token") or "").strip()
             if tok:
                 gh["token"] = tok
+        lg = cred.setdefault("localgit", {})
+        if localgit is not None:
+            lg["enabled"] = bool(localgit.get("enabled"))
         if local_roots is not None:
             cred["local_roots"] = [str(r).strip() for r in local_roots if str(r).strip()]
         store.save_credentials(cred)
@@ -886,7 +1015,7 @@ def _make_handler(api: "Api"):
     web_dir = Path(__file__).resolve().parent / "web"
     ALLOWED = {"get_view", "refresh", "tick", "rescan_local", "analyze",
                "get_analysis", "open_terminal", "dismiss_review", "hide_work_review",
-               "get_settings", "save_settings",
+               "get_settings", "save_settings", "detect_roots",
                "get_context", "set_active_launch", "update_active_launch",
                "pushback_launch", "complete_launch", "save_vision"}
     CONTENT_TYPES = {

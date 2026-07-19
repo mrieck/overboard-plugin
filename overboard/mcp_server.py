@@ -92,6 +92,7 @@ def get_commits(slug: str, limit: int = 20):
                 "workspace": r.get("workspace"),
                 "slug": slug,
                 "branch": r.get("branch"),
+                "path": r.get("path"),  # localgit reads commits from here
             }
             break
     if not repo or not repo["branch"]:
@@ -123,6 +124,7 @@ def get_recent_diff(slug: str, since: str = None):
                 "slug": slug,
                 "branch": r.get("branch"),
                 "head": r.get("head"),
+                "path": r.get("path"),  # localgit reads diffs from here
             }
             break
     if not repo or not repo["branch"]:

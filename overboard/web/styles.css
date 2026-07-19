@@ -236,6 +236,43 @@ html, body {
   padding-top: 4px;
 }
 
+/* onboarding wizard (reuses .modal / .settings-body / .src) */
+.wizard-body { padding: 10px 16px 14px; }
+.wiz-prog { display: flex; gap: 6px; justify-content: center; margin: 2px 0 12px; }
+.wiz-dot { width: 22px; height: 4px; border-radius: 2px; background: var(--border); }
+.wiz-dot.on { background: var(--accent); }
+.wiz-dot.done { background: var(--muted); }
+.wiz-lead { margin: 0 0 12px; font-size: 13px; color: var(--text); }
+.wiz-err { margin: 10px 0 0; font-size: 12px; color: var(--amber); }
+.path-cards { display: flex; flex-direction: column; gap: 8px; }
+.path-card {
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  cursor: pointer; background: var(--panel-2); transition: border-color .12s;
+}
+.path-card:hover { border-color: var(--muted); }
+.path-card.sel { border-color: var(--accent); background: var(--chip); }
+.path-card-h { display: flex; align-items: center; gap: 8px; }
+.path-card-check { font-size: 14px; color: var(--accent); }
+.path-card-title { font-weight: 600; font-size: 13px; }
+.path-card-tag { font-size: 10px; color: var(--amber); border: 1px solid var(--amber);
+  border-radius: 10px; padding: 0 6px; margin-left: auto; }
+.path-card-desc { margin: 4px 0 0; font-size: 11px; }
+.token-steps { margin: 4px 0 10px; padding-left: 18px; font-size: 12px; color: var(--muted); }
+.token-steps li { margin: 5px 0; }
+.token-steps a { color: var(--accent); }
+.token-steps code { background: var(--chip); padding: 0 4px; border-radius: 4px; }
+.root-list { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 10px; }
+.root-row { display: flex; align-items: center; gap: 8px; font-size: 12px;
+  padding: 5px 6px; border-radius: 6px; }
+.root-row:hover { background: var(--panel-2); }
+.root-path { color: var(--text); }
+.root-count { margin-left: auto; }
+.wiz-summary { margin: 4px 0 8px; padding-left: 18px; font-size: 12px; color: var(--text); }
+.wiz-summary li { margin: 4px 0; }
+.wizard-nav { display: flex; align-items: center; padding: 12px 16px;
+  border-top: 1px solid var(--border); }
+.wiz-spacer { flex: 1; }
+
 /* ---- right context panel (launches + vision) ------------------------------ */
 #context {
   width: 340px; flex-shrink: 0;

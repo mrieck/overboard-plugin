@@ -56,15 +56,24 @@ def parse_remote(url: str) -> tuple[str, str, str] | None:
 
 def _matchers_from_sources(sources: list[dict]) -> list[tuple[str, str | None]]:
     """(host, workspace-or-None) rules from the configured sources. GitHub uses
-    workspace=None (owner unknown up front) → any github.com clone matches."""
+    workspace=None (owner unknown up front) → any github.com clone matches. A
+    localgit source emits the wildcard (None, None) → any clone matches, so
+    local-only mode tracks every repo under the roots."""
     out = []
     for s in sources or []:
+        if s.get("provider") == "localgit":
+            out.append((None, None))  # match any clone
+            continue
         host = PROVIDER_HOSTS.get(s.get("provider"))
         if not host:
             continue
         ws = s.get("workspace")
         out.append((host, ws.lower() if ws else None))
     return out
+
+
+def _has_localgit(sources: list[dict] | None) -> bool:
+    return any((s or {}).get("provider") == "localgit" for s in (sources or []))
 
 
 def _matches(host: str, ws: str, matchers: list[tuple[str, str | None]]) -> bool:
@@ -216,6 +225,54 @@ def discover(roots: list[str], matchers: list[tuple[str, str | None]]) -> dict[s
     return found
 
 
+def _localgit_slug(p: Path, seen: dict[str, str]) -> str:
+    """A stable slug for a local clone: its remote slug when it has one (so a
+    repo also tracked via GitHub/Bitbucket lines up on the same slug), else the
+    repo directory name. Collisions against a *different* path are disambiguated
+    with the parent folder so two `webapp` dirs don't clobber each other."""
+    url = git_remote_url(p)
+    parsed = parse_remote(url) if url else None
+    slug = parsed[2] if parsed else p.name
+    if slug in seen and seen[slug] != str(p):
+        base = f"{p.parent.name}__{slug}"
+        alt, i = base, 2
+        while alt in seen and seen[alt] != str(p):
+            alt = f"{base}_{i}"
+            i += 1
+        slug = alt
+    return slug
+
+
+def discover_localgit(roots: list[str]) -> list[dict]:
+    """Every git clone under `roots`, as [{slug, path, branch}] — no remote or
+    configured source required. Powers local-only tracking (commits read via
+    `git log`). Same pruned walk as `discover`, stopping at the first `.git`."""
+    seen: dict[str, str] = {}
+    out: list[dict] = []
+    for root in roots:
+        base = Path(os.path.expanduser(root))
+        if not base.exists():
+            continue
+        for dirpath, dirnames, _filenames in os.walk(base):
+            p = Path(dirpath)
+            if (p / ".git").is_dir():
+                dirnames[:] = []  # a repo — don't descend into it
+                slug = _localgit_slug(p, seen)
+                seen[slug] = str(p)
+                try:
+                    bp = _git(p, "symbolic-ref", "--short", "-q", "HEAD")
+                    branch = bp.stdout.strip() if bp.returncode == 0 else ""
+                except (subprocess.TimeoutExpired, OSError):
+                    branch = ""
+                out.append({"slug": slug, "path": str(p), "branch": branch})
+            else:
+                dirnames[:] = [
+                    d for d in dirnames
+                    if d not in _SKIP_DIRS and not d.startswith(".")
+                ]
+    return out
+
+
 def links_for_machine(state: dict) -> dict[str, str]:
     return state.get("local_links", {}).get(machine_key(), {})
 
@@ -239,9 +296,14 @@ def resolved_roots(config: dict | None = None, extra: list | None = None) -> lis
 def update_state_links(state: dict, config: dict, sources: list[dict] | None = None,
                        extra_roots: list | None = None) -> dict[str, str]:
     """Rescan (across all configured sources) and store the discovered map under
-    this machine's key. Returns the map for this machine."""
+    this machine's key. Returns the map for this machine. When local-only mode is
+    on, every clone under the roots is linked (remote-parsed slug when present,
+    else the dir name) so badges/analysis work for repos with no API source."""
     roots = resolved_roots(config, extra_roots)
-    links = discover(roots, _matchers_from_sources(sources or []))
+    if _has_localgit(sources):
+        links = {d["slug"]: d["path"] for d in discover_localgit(roots)}
+    else:
+        links = discover(roots, _matchers_from_sources(sources or []))
     state.setdefault("local_links", {})[machine_key()] = links
     return links
 
