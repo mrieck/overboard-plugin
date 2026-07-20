@@ -131,11 +131,13 @@ answer "what just landed, and do I agree with it". When a pending entry has
    from the Linux/DO box), call **`get_recent_diff(slug, review_since[slug])`**.
    If it returns a `patch`, review that real diff yourself and build a full
    `source: "diffs"` unit (decisions, new surface, snippets from the patch),
-   passing `reviewed_heads={slug: head}`. Only if it returns an **`error`**
-   (no creds / force-push / provider down) fall back to a shallower
-   `get_commits(slug)` unit with `source: "messages"` — commit subjects only,
-   no snippets. (`get_recent_diff` also caps huge diffs and sets `truncated` —
-   go lighter when it does.)
+   passing `reviewed_heads={slug: head}`. **This is mandatory, not optional** —
+   never skip to commit messages because the patch looks long; a big `patch` is
+   still the review input (skim it for the decisions and new surface, and go
+   lighter when `truncated` is set). The ONLY excuse for a `source: "messages"`
+   unit built from `get_commits(slug)` is `get_recent_diff` returning an
+   **`error`** (no creds / force-push / provider down) — messages-only cards are
+   guesses from one-liners and the CTO can't trust their decisions/snippets.
 4. **Cluster across repos into 1–3 themes** for the project (an app's `-api` +
    `-web` work on one feature is ONE unit), then call
    **`record_work_review(project, units, reviewed_heads)`** — pass each repo's

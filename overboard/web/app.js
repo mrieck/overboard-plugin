@@ -33,8 +33,10 @@ let CONTEXT_FOR = null; // project whose right-panel context is currently render
 // and rendered Mermaid SVGs must live outside the DOM or cards snap shut and
 // diagrams flicker. WORK_OPEN: project -> Set of expanded unit ids (newest card
 // opens by default); WORK_MMD: unit id -> rendered SVG string.
+// WORK_ALL: projects whose full card list is shown (default: first 4 + Load all).
 const WORK_OPEN = {};
 const WORK_MMD = {};
+const WORK_ALL = new Set();
 
 function boot() {
   if (window.mermaid) {
@@ -343,7 +345,7 @@ function projectRow(proj) {
   const name = document.createElement("div");
   name.className = "prow-name";
   name.textContent = proj.display || proj.name;
-  if (proj.grouping_source !== "agent") {
+  if (proj.grouping_source !== "agent" && !proj.named_by_cto) {
     name.classList.add("dim");
     name.title = "Auto-grouped by name — the assistant will confirm the grouping and name";
   }
@@ -361,7 +363,10 @@ function projectRow(proj) {
   }
   main.appendChild(meta);
 
-  if (proj.launch) main.appendChild(launchLine(proj.launch));
+  // A CTO-set standing status ("Shipped", "On Hold") takes the launch line's
+  // slot — once the CTO has parked a project, the countdown is noise.
+  if (proj.status) main.appendChild(statusLine(proj.status));
+  else if (proj.launch) main.appendChild(launchLine(proj.launch));
 
   row.appendChild(main);
   row.appendChild(activityGrid(proj.daily_counts)); // 30-day GitHub-style grid
@@ -387,11 +392,20 @@ function chipMini(proj) {
   return c;
 }
 
-// A compact scheduled-launch line for the sidebar row: rocket + label + a
-// countdown that turns amber when the date is within a week / overdue.
+// The CTO-set standing status, in the launch line's slot.
+function statusLine(status) {
+  const wrap = el("div", "prow-launch");
+  const s = el("span", "prow-status", status);
+  const key = status.toLowerCase().replace(/[^a-z]+/g, "-");
+  if (key) s.classList.add("st-" + key);
+  wrap.appendChild(s);
+  return wrap;
+}
+
+// A compact scheduled-launch line for the sidebar row: label + a countdown
+// that turns amber when the date is within a week / overdue.
 function launchLine(l) {
   const wrap = el("div", "prow-launch");
-  wrap.appendChild(el("span", "prow-launch-icon", "🚀"));
   const label = l.title || l.type || "Launch";
   wrap.appendChild(el("span", "prow-launch-label", label));
 
@@ -481,6 +495,7 @@ function ensureDetailShell() {
 
 function renderReport(proj) {
   const host = document.getElementById("detail-report");
+  if (host.querySelector(".rename-input")) return; // don't wipe an in-progress rename on ticks
   host.textContent = "";
 
   // Top row: summary on the left, 30-day commit grid on the right.
@@ -490,7 +505,11 @@ function renderReport(proj) {
   const main = document.createElement("div");
   main.className = "rep-top-main";
   const h = document.createElement("h2");
-  h.textContent = proj.display || proj.name;
+  h.appendChild(el("span", "proj-title", proj.display || proj.name));
+  const rn = el("button", "btn ghost small rename-btn", "✎");
+  rn.title = "Rename this project";
+  rn.addEventListener("click", () => openRename(h, proj));
+  h.appendChild(rn);
   h.appendChild(chip(proj));
   if (proj.activity && proj.activity.length) {
     const ab = document.createElement("button");
@@ -559,11 +578,18 @@ function renderReport(proj) {
   }
 
   // Recent work — the assistant's per-sprint delta cards, newest first.
+  // Only the first 4 by default; "Load all" reveals the rest.
   const units = proj.work_reviews || [];
   if (units.length) {
     if (!WORK_OPEN[proj.name]) WORK_OPEN[proj.name] = new Set([units[0].id]);
     host.appendChild(sectionTitle("Recent work"));
-    for (const u of units) host.appendChild(workCard(proj, u));
+    const shown = WORK_ALL.has(proj.name) ? units : units.slice(0, 4);
+    for (const u of shown) host.appendChild(workCard(proj, u));
+    if (shown.length < units.length) {
+      const more = el("button", "btn ghost small work-more", `Load all (${units.length})`);
+      more.addEventListener("click", () => { WORK_ALL.add(proj.name); render(); });
+      host.appendChild(more);
+    }
   }
 
   // Repositories — analysis for local ones is auto-loaded below.
@@ -577,7 +603,7 @@ function renderReport(proj) {
 // ---- recent-work cards (assistant-owned delta layer) -----------------------
 function workCard(proj, u) {
   const open = WORK_OPEN[proj.name];
-  const card = el("div", "work-card" + (u.source === "messages" ? " msg-src" : ""));
+  const card = el("div", "work-card");
 
   const head = el("div", "work-head");
   head.addEventListener("click", () => {
@@ -594,12 +620,6 @@ function workCard(proj, u) {
   if (per.from || per.to) bits.push(per.from === per.to ? per.from : `${per.from || "…"} – ${per.to || "…"}`);
   if ((u.commits || []).length) bits.push(`${u.commits.length} commit${u.commits.length === 1 ? "" : "s"}`);
   head.appendChild(el("span", "work-meta subtle", bits.join(" · ")));
-
-  if (u.source === "messages") {
-    const b = el("span", "work-src-msg", "messages");
-    b.title = "Built from commit messages only — no local clone to diff";
-    head.appendChild(b);
-  }
 
   const hide = el("button", "work-hide", "✕");
   hide.title = "Hide this card — I've reviewed it";
@@ -1142,6 +1162,37 @@ function ago(ts) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+// Swap the detail-header title for an inline input; Enter/blur saves the
+// CTO's display name (empty restores the grouping name), Escape cancels.
+function openRename(h, proj) {
+  const title = h.querySelector(".proj-title");
+  const btn = h.querySelector(".rename-btn");
+  if (!title || h.querySelector(".rename-input")) return;
+  const input = document.createElement("input");
+  input.type = "text"; input.className = "rename-input";
+  input.value = proj.display || proj.name;
+  title.replaceWith(input);
+  btn.style.display = "none";
+  input.focus(); input.select();
+
+  let done = false;
+  const finish = async (saveIt) => {
+    if (done) return; done = true;
+    if (saveIt) {
+      const v = input.value.trim();
+      // Same as the grouping name ⇒ store no override.
+      const display = v === proj.name ? "" : v;
+      await call("rename_project", { project: proj.name, display });
+    }
+    await loadView(); // re-renders the header and sidebar
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") finish(true);
+    else if (e.key === "Escape") finish(false);
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
 function chip(proj) {
   const c = document.createElement("span");
   if (proj.commits_today) {
@@ -1574,8 +1625,54 @@ function buildContext(host, project, ctx) {
   if (ctx.active_launch) host.appendChild(launchCard(project, ctx));
   else host.appendChild(launchForm(project, null));
   if ((ctx.past_launches || []).length) host.appendChild(historyBlock(ctx.past_launches));
+  host.appendChild(el("h3", "ctx-title", "Status"));
+  host.appendChild(statusBlock(project, ctx.status || ""));
   host.appendChild(el("h3", "ctx-title", "Vision / direction"));
   host.appendChild(visionBlock(project, ctx.vision || ""));
+}
+
+// A standing status the CTO can park a project under ("Shipped", "On Hold").
+// Replaces the launch line in the left sidebar; saves on change.
+const STATUS_OPTIONS = ["Shipped", "On Hold", "Maintenance", "Back Burner", "Other"];
+
+function statusBlock(project, current) {
+  const box = el("div", "status-block");
+  const sel = document.createElement("select");
+  const none = document.createElement("option");
+  none.value = ""; none.textContent = "— none —";
+  sel.appendChild(none);
+  for (const o of STATUS_OPTIONS) {
+    const opt = document.createElement("option");
+    opt.value = o; opt.textContent = o;
+    sel.appendChild(opt);
+  }
+  const custom = document.createElement("input");
+  custom.type = "text"; custom.placeholder = "type it…"; custom.className = "ctx-other";
+  if (current && STATUS_OPTIONS.includes(current)) sel.value = current;
+  else if (current) { sel.value = "Other"; custom.value = current; }
+  custom.style.display = sel.value === "Other" ? "block" : "none";
+
+  const note = el("span", "subtle ctx-status", "");
+  const save = async () => {
+    const value = sel.value === "Other" ? custom.value.trim() : sel.value;
+    if (sel.value === "Other" && !value) return; // wait for the custom text
+    note.textContent = "Saving…";
+    await call("set_project_status", { project, status: value });
+    note.textContent = "saved ✓";
+    setTimeout(() => { note.textContent = ""; }, 1500);
+    loadView(); // reflect in the sidebar row
+  };
+  sel.addEventListener("change", () => {
+    custom.style.display = sel.value === "Other" ? "block" : "none";
+    if (sel.value === "Other") { custom.focus(); return; }
+    save();
+  });
+  custom.addEventListener("change", save);
+
+  box.appendChild(sel);
+  box.appendChild(custom);
+  box.appendChild(note);
+  return box;
 }
 
 // A <select> of `options` plus a text input that appears only when "Other" is
@@ -1683,6 +1780,8 @@ function launchCard(project, ctx) {
     body.appendChild(el("h3", "ctx-title", "Launch / milestone"));
     body.appendChild(launchForm(project, a));
     if ((ctx.past_launches || []).length) body.appendChild(historyBlock(ctx.past_launches));
+    body.appendChild(el("h3", "ctx-title", "Status"));
+    body.appendChild(statusBlock(project, ctx.status || ""));
     body.appendChild(el("h3", "ctx-title", "Vision / direction"));
     body.appendChild(visionBlock(project, ctx.vision || ""));
   });
@@ -1726,19 +1825,28 @@ function openPushback(project, a) {
   else body.appendChild(form);
 }
 
+// The most recent past launch stays visible; only older ones fold away.
 function historyBlock(past) {
-  const wrap = el("details", "launch-history");
-  wrap.appendChild(el("summary", "", `History (${past.length})`));
-  for (const p of past) {
-    const row = el("div", "hist-row");
-    const shipped = p.status !== "cancelled";
-    row.appendChild(el("span", "hist-status " + (shipped ? "shipped" : "cancelled"),
-      (shipped ? "🎉 " : "") + (p.status || "done")));
-    const label = `${p.type || ""} ${p.title || ""}`.trim() + (p.target_date ? " · " + p.target_date : "");
-    row.appendChild(el("span", "", label));
-    wrap.appendChild(row);
+  const wrap = el("div", "launch-history");
+  wrap.appendChild(el("div", "hist-title", "History"));
+  wrap.appendChild(histRow(past[0]));
+  if (past.length > 1) {
+    const more = el("details", "");
+    more.appendChild(el("summary", "", `${past.length - 1} earlier`));
+    for (const p of past.slice(1)) more.appendChild(histRow(p));
+    wrap.appendChild(more);
   }
   return wrap;
+}
+
+function histRow(p) {
+  const row = el("div", "hist-row");
+  const shipped = p.status !== "cancelled";
+  row.appendChild(el("span", "hist-status " + (shipped ? "shipped" : "cancelled"),
+    (shipped ? "🎉 " : "") + (p.status || "done")));
+  const label = `${p.type || ""} ${p.title || ""}`.trim() + (p.target_date ? " · " + p.target_date : "");
+  row.appendChild(el("span", "", label));
+  return row;
 }
 
 function visionBlock(project, vision) {

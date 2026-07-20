@@ -57,9 +57,11 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
 - `ai.json` — **assistant-owned** (summaries, digests, architecture, and
   `work_reviews` — the per-sprint "recent work" cards). Written only
   via the `set_*`/`record_*` MCP tools; the dashboard reads but never writes it.
-- `context.json` — **CTO-owned** (per-project launch/milestone + vision). Written
-  only by the dashboard's `Api` (get_context/set_active_launch/update_active_launch/
-  pushback_launch/complete_launch/save_vision); the agent **reads** it via the MCP
+- `context.json` — **CTO-owned** (per-project launch/milestone + vision + a
+  standing `status` like "Shipped"/"On Hold" that replaces the launch line in the
+  sidebar). Written only by the dashboard's `Api` (get_context/set_active_launch/
+  update_active_launch/pushback_launch/complete_launch/save_vision/
+  set_project_status); the agent **reads** it via the MCP
   `get_project_context` tool but never writes. One active launch per project;
   completed ones move to `past_launches`.
 - `events.jsonl` — append-only (hooks + flags/status). Safe by construction.

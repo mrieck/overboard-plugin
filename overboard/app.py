@@ -600,7 +600,8 @@ class Api:
             ]
             # Compact scheduled-launch summary for the sidebar (full detail is
             # fetched via get_context when a project is selected).
-            active = (all_ctx.get(name) or {}).get("active_launch")
+            proj_ctx = all_ctx.get(name) or {}
+            active = proj_ctx.get("active_launch")
             launch = None
             if active:
                 launch = {
@@ -611,7 +612,8 @@ class Api:
                 }
             projects.append({
                 "name": name,
-                "display": p.get("display") or name,
+                "display": proj_ctx.get("display") or p.get("display") or name,
+                "named_by_cto": bool(proj_ctx.get("display")),
                 "grouping_source": p.get("grouping_source") or "prefix",
                 "summary": (ai_sum.get(name) or {}).get("text"),
                 "commits_today": p.get("commits_today") or 0,
@@ -626,6 +628,7 @@ class Api:
                     if u.get("id") not in hidden_work
                 ],
                 "launch": launch,
+                "status": proj_ctx.get("status", ""),
             })
         return {
             "projects": projects,
@@ -831,6 +834,8 @@ class Api:
             "active_launch": active,
             "past_launches": ctx.get("past_launches", []),
             "vision": ctx.get("vision", ""),
+            "status": ctx.get("status", ""),
+            "display": ctx.get("display", ""),
         }
 
     def _mutate_context(self, project: str, fn) -> dict:
@@ -907,6 +912,16 @@ class Api:
 
     def save_vision(self, project: str, text: str = "") -> dict:
         return self._mutate_context(project, lambda e: e.__setitem__("vision", (text or "").strip()[:8000]))
+
+    def set_project_status(self, project: str, status: str = "") -> dict:
+        """A CTO-set standing status ("Shipped", "On Hold", …). Shown in the
+        sidebar in place of the launch line; empty clears it."""
+        return self._mutate_context(project, lambda e: e.__setitem__("status", (status or "").strip()[:40]))
+
+    def rename_project(self, project: str, display: str = "") -> dict:
+        """A CTO-set display name that overrides the grouping's name everywhere.
+        Empty clears the override (back to the grouping/prefix name)."""
+        return self._mutate_context(project, lambda e: e.__setitem__("display", (display or "").strip()[:80]))
 
     def analyze(self, slug: str) -> dict:
         """Run analysis for one repo's local clone, reusing the cached result
@@ -1017,7 +1032,8 @@ def _make_handler(api: "Api"):
                "get_analysis", "open_terminal", "dismiss_review", "hide_work_review",
                "get_settings", "save_settings", "detect_roots",
                "get_context", "set_active_launch", "update_active_launch",
-               "pushback_launch", "complete_launch", "save_vision"}
+               "pushback_launch", "complete_launch", "save_vision",
+               "set_project_status", "rename_project"}
     CONTENT_TYPES = {
         ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
         ".json": "application/json", ".svg": "image/svg+xml",
