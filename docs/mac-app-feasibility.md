@@ -11,11 +11,17 @@ contract (`~/.cache/overboard/`, five files, strict single-writer ownership,
 surface is ~4,000 lines, of which only ~2,300 need Swift equivalents (the MCP
 server and hooks stay Python and stay free). The dominant cost is not the backend
 port — it's rebuilding the 74 KB vanilla-JS frontend as SwiftUI. Realistic solo
-effort to a sellable 1.0: **~13–18 weeks**.
+effort to a sellable 1.0: **~14–19 weeks**.
 
-The premium story that justifies $29.99 is **automation and presence** (scheduled
-autonomous `/overboard` runs + keep-awake + menu bar + notifications +
-transcript/usage browsing), not a prettier viewer.
+The premium story that justifies $29.99 is **automation and presence**, not a
+prettier viewer — and the frame is bigger than overboard itself: the app is
+**the automation hub for all of the user's Claude Code plugins**. The owner is
+building a family of plugins (overboard, socialcue's `/socialdiscovery`, more
+coming); the scheduler runs any of them as slots — socialcue at 9 am in its
+project, `/overboard` overnight, future plugins whenever — with the menu bar
+watching the whole fleet and usage tracking optimizing the Max plan
+(off-hours batch runs). Overboard's dashboard is the flagship *view*; the
+scheduler is the engine.
 
 **Non-negotiable design principle — Max subscription only.** Overboard is
 key-free by design (see CLAUDE.md): all AI work happens inside the user's own
@@ -140,60 +146,91 @@ window," "run assistant now," "hold Mac awake." Support menu-bar-only mode
 
 ## 2. Premium feature assessment
 
-### 2.1 Scheduler for interactive terminal Claude sessions — **the flagship. Build it. (M–L)**
+### 2.1 Multi-plugin session scheduler — **the flagship. Build it. (M–L)**
 
 The `/overboard` assistant loop is the product's magic, but today a human must
-start it. Automating it turns Overboard from "a dashboard I check" into "a chief
-of staff that worked while I slept" — that sentence sells a $29.99 app.
+start it — and the same is true of every other plugin the owner is building
+(e.g. socialcue's `/socialdiscovery`, which drives a logged-in local browser and
+writes opportunities to `.socialdiscovery/` in its project). Automating the
+whole family turns Overboard from "a dashboard I check" into "a chief of staff
+and a staff of specialists that worked while I slept."
 
 **Hard constraint: no `claude -p`, ever.** The scheduler launches **real
 interactive Claude Code terminal sessions** on the user's Max subscription — the
 same thing the user would do by hand, just started on a schedule.
 
+**The unit of scheduling is a generic "session slot," not a hardcoded
+`/overboard` run:**
+
+```
+slot = {
+  name,                      // "Morning social discovery"
+  cwd,                       // project dir — plugins are cwd-sensitive
+                             //   (socialcue writes .socialdiscovery/ in-project)
+  command,                   // typed into claude: "/socialdiscovery", "/overboard", …
+  schedule,                  // cron-like: daily 9am, nightly 2am, every 2h 9-6, …
+  preflight?,                // optional shell command and/or health probe run first
+                             //   (e.g. is Chrome CDP answering on :9222? start bridge)
+  priority, timeout, keepAwake
+}
+```
+
 - **Mechanism (recommended): embedded terminal.** Bundle a terminal emulator
   view (SwiftTerm — mature, MIT-licensed, powers several shipping Mac apps) in a
-  "Runs" pane. A scheduled run spawns a real PTY running the user's shell, types
-  `claude` and then the configured slash command (default `/overboard`) as the
-  initial prompt, exactly as an interactive session. The user can watch the
-  session live, scroll it, and *take over typing at any moment* — automation
-  that stays a first-class interactive session. Fallback/option for people who
-  prefer their own terminal: drive Terminal.app or iTerm2 via AppleScript
-  (`osascript` / NSAppleScript) to open a window running the same command.
-- **Results flow back for free:** the session writes
-  summaries/digests/work-reviews through the existing MCP `set_*`/`record_*`
-  tools into `ai.json`; the file watcher sees the change, the UI updates, a
-  notification fires. No new data path — the elegant payoff of building on the
-  plugin's contract.
-- **Completion detection without headless output parsing:** the plugin's own
-  hooks are the signal. The app tails `events.jsonl`; the `Stop`/`SessionEnd`
-  events for the spawned session (matched by cwd/session start time) mark the
-  run finished — then notify, log, and optionally close the pane. The plugin's
-  observability loop doubles as the scheduler's telemetry.
-- **Scheduling:** the app UI owns the schedule ("every 2 h during work hours,"
-  "nightly at 2 am") and registers a launchd LaunchAgent
+  "Runs" pane. A run spawns a real PTY in the slot's `cwd`, runs `claude`, and
+  types the slot's command as the initial prompt — exactly an interactive
+  session. The user can watch it live, scroll it, and *take over typing at any
+  moment*. Fallback/option: drive Terminal.app or iTerm2 via AppleScript for
+  people who prefer their own terminal.
+- **Global run queue, not independent timers.** Every session draws from the
+  same Max plan limits, so slots feed one queue with priorities and a
+  concurrency cap (default 1, max 2). 9 am pile-ups get serialized; a running
+  slot is never overlapped by its own next firing.
+- **Usage-aware scheduling — the "optimize my Max plan" feature.** This
+  promotes usage tracking (§2.3) from nice-to-have to load-bearing: with
+  per-session token data from transcripts, the scheduler can run batch slots
+  off-hours, defer a slot when the current usage window is nearly spent, and
+  report plan consumption split into "automation" vs. "hands-on" work. No
+  other tool has this; it is exactly the owner's stated goal.
+- **Pre-flight checks:** if a slot's probe fails (Chrome CDP down, bridge not
+  running), notify and skip instead of spawning a session that will stall.
+  The optional setup command can also *fix* the precondition (launch the
+  dedicated Chrome profile, `npm run bridge`).
+- **Completion detection without output parsing:** overboard's hooks fire for
+  **every** Claude Code session regardless of which plugin it uses, so
+  `Stop`/`SessionEnd` events (matched by cwd + start time) in `events.jsonl`
+  mark any slot's run finished — then notify, log, close the pane. Overboard is
+  already the observability layer for the whole fleet; requiring the (free)
+  overboard plugin as the app's telemetry backbone is a natural dependency.
+- **Results flow back for free** (overboard slots): the session writes
+  summaries/digests/work-reviews via the MCP `set_*`/`record_*` tools into
+  `ai.json`; the file watcher updates the UI. Other plugins surface through
+  their own stores plus the generic "session finished in *X*" notification.
+- **Scheduling:** the app UI owns all slots and registers a launchd LaunchAgent
   (`StartCalendarInterval`) via `SMAppService.agent` (macOS 13+) that launches
-  the app (e.g. via `overboard://run/<slot>`) if it isn't running, which then
-  opens the embedded session. LaunchAgents run inside the user's GUI login
-  session, which is exactly what an interactive terminal session needs.
-- **Skill/plugin selection:** user picks the slash command / initial prompt per
-  schedule slot (default `/overboard`; power users add their own commands).
-  Keep the typed invocation user-editable — also the hedge against CLI churn.
-- **Run history:** log each run (start/end, how it ended, scrollback capture) to
-  `~/Library/Application Support/Overboard/runs/` and surface failures in the
-  Runs pane.
+  the app (e.g. `overboard://run/<slot>`) if it isn't running. LaunchAgents run
+  inside the user's GUI login session — exactly what an interactive terminal
+  session needs.
+- **Slot setup includes one supervised dry run.** An interactive session in a
+  fresh project stalls on permission prompts. The slot wizard's last step runs
+  the slot once with the user watching so they grant/allowlist the needed
+  permissions in that project's `.claude/settings.json`; only then does the
+  schedule arm. The "session waiting for input" notification is the safety net
+  for anything that still prompts later.
+- **Run history:** log each run (slot, start/end, how it ended, scrollback
+  capture) to `~/Library/Application Support/Overboard/runs/` and surface
+  failures in the Runs pane.
 - **Honest caveats to document:** scheduled sessions consume Max/Pro plan
-  limits; runs need `claude` on PATH and a logged-in CLI; the user must be
-  logged into their Mac (GUI session) for a session to spawn — which is why
-  keep-awake (§2.2) is the scheduler's sibling feature; a run can take minutes —
-  serialize runs, never overlap; an interactive session may hit a permission
-  prompt and stall, so surface "session waiting for input" as a notification
-  rather than pretending it can't happen.
-- **Effort:** M–L (2–3 wk incl. SwiftTerm integration, launchd, run history).
-  Slightly more than a headless design would have been — the PTY/terminal
-  embedding is the added cost — but it is the only design consistent with the
-  Max-subscription-only principle, and the visible session is *better* product:
-  the user can watch their chief of staff work. **Value: highest of any
-  candidate.**
+  limits (the queue + usage-awareness are the mitigations, not a fix); runs
+  need `claude` on PATH and a logged-in CLI; the user must be logged into their
+  Mac (GUI session) for a session to spawn — which is why keep-awake (§2.2) is
+  the scheduler's sibling feature; a run can take minutes.
+- **Effort:** M–L (3–4.5 wk incl. SwiftTerm integration, slot model + queue,
+  pre-flight, launchd, dry-run wizard, run history). More than a headless
+  design would have been — the PTY embedding and slot generality are the added
+  cost — but it is the only design consistent with the Max-subscription-only
+  principle, and the visible session is *better* product: the user can watch
+  their staff work. **Value: highest of any candidate.**
 
 ### 2.2 Keep-awake / scheduled wake — **keep-awake in v1 (S); real wake in v1.1 (M)**
 
@@ -224,10 +261,14 @@ same thing the user would do by hand, just started on a schedule.
   already solves the lossy dir-name decoding). A searchable "what exactly did
   the team do in that session" viewer, linked from activity rows and recent-work
   cards via `session_id`. Closes the trust loop the whole product is about.
-- **Usage tracking — ACCEPT (M, ~1 wk).** Parse the same transcripts for
-  per-session token/model usage; per-project and daily rollups, "heaviest
-  sessions." ccusage-style tools prove demand in exactly this audience. Frame as
-  *usage against your plan*, not dollars (Max users don't pay per token).
+- **Usage tracking — ACCEPT (M, ~1 wk), load-bearing.** Parse the same
+  transcripts for per-session token/model usage; per-project and daily rollups,
+  "heaviest sessions," and an **automation vs. hands-on split** (scheduled-slot
+  sessions are known to the app, so attribute them). ccusage-style tools prove
+  demand in exactly this audience. Frame as *usage against your plan*, not
+  dollars (Max users don't pay per token). This feature also feeds the
+  scheduler's usage-aware decisions (§2.1) — build the parser once, use it
+  twice.
 - **URL scheme deep links (`overboard://project/x`) — ACCEPT (S, ~1 d)** —
   needed for notification click-through anyway.
 - **Spotlight indexing of reports — REJECT:** niche, real maintenance cost.
@@ -243,14 +284,16 @@ same thing the user would do by hand, just started on a schedule.
 ### 2.4 The coherent premium tier
 
 Don't sell a grab bag; sell one sentence: **"The web dashboard shows you what
-happened. The Mac app is the chief of staff that's always on: it watches in the
-menu bar, notifies you the moment something needs you, runs your assistant on a
-schedule — even overnight, keeping the Mac awake — and lets you audit any
-session's transcript and usage."**
+happened. The Mac app runs your whole plugin fleet on a schedule — social
+discovery at 9 am, your chief of staff overnight, keeping the Mac awake —
+watches it all from the menu bar, notifies you the moment something needs you,
+and lets you audit any session's transcript and what it cost your plan."**
 
-v1 paid set: native app + menu bar + notifications + scheduler + keep-awake +
-transcript browser + usage view + deep links. Comfortably north of $29.99 for
-someone running many projects at once.
+v1 paid set: native app + menu bar + notifications + multi-plugin scheduler +
+keep-awake + transcript browser + usage view + deep links. Comfortably north of
+$29.99 for someone running many projects — and many plugins — at once. As the
+owner ships more plugins, each one makes the hub more valuable without the app
+changing at all: a new plugin is just a new slot.
 
 ---
 
@@ -358,8 +401,11 @@ not the transport.
 4. **Free-rides-free tension:** the web dashboard is genuinely good and free. A
    "native viewer only" v1 would not sell — the automation tier *is* the
    product. Conversely, resist gating plugin improvements behind the app.
-5. **Scheduled runs vs. plan limits:** conservative defaults, visible failures,
-   and the usage view (§2.3) as the pressure gauge.
+5. **Scheduled runs vs. plan limits:** with a fleet of slots this compounds —
+   the global queue's concurrency cap, usage-aware deferral (§2.1), conservative
+   defaults, visible failures, and the usage view (§2.3) are the pressure
+   valves. The automation-vs-hands-on usage split keeps the trade-off visible
+   to the user instead of silently eating their interactive capacity.
 6. **Open questions:** minimum macOS target (recommend 14 — modern
    `MenuBarExtra` + `SMAppService`); CloudKit-for-Developer-ID confirmation
    before v2; Keychain vs `credentials.json` — keep the 0600 file authoritative
@@ -374,13 +420,13 @@ not the transport.
 | **0 — Contract** | `SCHEMA.md` from `store.py`/`events.py`/hooks/HTTP API; fixture corpus + golden views from the Python implementation | 1 wk |
 | **1 — Native viewer + presence** (private alpha) | Codable models w/ lossless round-trip; directory DispatchSource + JSONL tailing; sidebar w/ activity grids, project detail, recent-work cards, AI overlay, Mermaid island; menu bar; notifications; deep links. Read-only + mirror-mode mutations via localhost API | 4–6 wk |
 | **2 — Dashboard takeover** (beta) | Swift refresh engine (GitHub/Bitbucket/localgit), discovery + grouping, settings + onboarding wizard, context/launch editing, partial static-analysis port, compaction, sync-status; port-probe ownership protocol; golden-view parity tests pass | 3–4 wk |
-| **3 — Automation tier** | Scheduler spawning interactive terminal sessions (SwiftTerm embedded pane + Terminal.app/iTerm option, launchd via SMAppService — never `claude -p`), run history, keep-awake tied to runs + manual toggle, stalled-session + failure notifications | 2.5–3.5 wk |
+| **3 — Automation tier** | Multi-plugin session scheduler: generic slots (cwd + command + schedule + pre-flight), global priority queue, interactive terminal sessions (SwiftTerm embedded pane + Terminal.app/iTerm option, launchd via SMAppService — never `claude -p`), supervised dry-run slot wizard, run history, keep-awake tied to runs + manual toggle, stalled-session + failure notifications | 3–4.5 wk |
 | **4 — Audit tier** | Transcript browser, usage view, links from activity/cards into transcripts | 2–3 wk |
 | **5 — Ship** | Lemon Squeezy checkout + activation, trial, Sparkle appcast, Developer ID + notarization CI, marketing site, 1.0 | 2 wk |
 | **v1.x** | Privileged-helper scheduled wake (`pmset`), App Intents/Shortcuts, widget via group container | as demanded |
 | **v2** | CloudKit private-DB sync of `ai.json`/`context.json` (per-key LWW on `at`), multi-Mac merge UI | 4–6 wk |
 
-Total to 1.0: **~13–18 weeks solo.** Phases 1–2 are sequenced so a working demo
+Total to 1.0: **~14–19 weeks solo.** Phases 1–2 are sequenced so a working demo
 on real user data exists at ~week 6, and the app never blocks the free plugin's
 evolution.
 
