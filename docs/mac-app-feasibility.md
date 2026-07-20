@@ -17,6 +17,14 @@ The premium story that justifies $29.99 is **automation and presence** (schedule
 autonomous `/overboard` runs + keep-awake + menu bar + notifications +
 transcript/usage browsing), not a prettier viewer.
 
+**Non-negotiable design principle — Max subscription only.** Overboard is
+key-free by design (see CLAUDE.md): all AI work happens inside the user's own
+interactive Claude Code sessions on their Max/Pro subscription. The Mac app must
+never call an inference API, never require an `ANTHROPIC_API_KEY`, and **never
+use headless `claude -p` mode**. Automation means *launching and supervising
+real interactive terminal sessions* — visible, auditable, and interruptible by
+the user — not headless invocations. Every feature below conforms to this rule.
+
 ---
 
 ## 1. Architecture of the Mac app
@@ -132,34 +140,59 @@ window," "run assistant now," "hold Mac awake." Support menu-bar-only mode
 
 ## 2. Premium feature assessment
 
-### 2.1 Scheduler for headless Claude runs — **the flagship. Build it. (M)**
+### 2.1 Scheduler for interactive terminal Claude sessions — **the flagship. Build it. (M–L)**
 
 The `/overboard` assistant loop is the product's magic, but today a human must
 start it. Automating it turns Overboard from "a dashboard I check" into "a chief
 of staff that worked while I slept" — that sentence sells a $29.99 app.
 
-- **Mechanism:** run `claude -p "/overboard"` headless via `Process` (capture
-  stdout/stderr; JSON output mode for run metadata). Results flow back **for
-  free**: the session writes summaries/digests/work-reviews through the existing
-  MCP `set_*`/`record_*` tools into `ai.json`; the file watcher sees the change,
-  the UI updates, a notification fires. No new data path — the elegant payoff of
-  building on the plugin's contract.
+**Hard constraint: no `claude -p`, ever.** The scheduler launches **real
+interactive Claude Code terminal sessions** on the user's Max subscription — the
+same thing the user would do by hand, just started on a schedule.
+
+- **Mechanism (recommended): embedded terminal.** Bundle a terminal emulator
+  view (SwiftTerm — mature, MIT-licensed, powers several shipping Mac apps) in a
+  "Runs" pane. A scheduled run spawns a real PTY running the user's shell, types
+  `claude` and then the configured slash command (default `/overboard`) as the
+  initial prompt, exactly as an interactive session. The user can watch the
+  session live, scroll it, and *take over typing at any moment* — automation
+  that stays a first-class interactive session. Fallback/option for people who
+  prefer their own terminal: drive Terminal.app or iTerm2 via AppleScript
+  (`osascript` / NSAppleScript) to open a window running the same command.
+- **Results flow back for free:** the session writes
+  summaries/digests/work-reviews through the existing MCP `set_*`/`record_*`
+  tools into `ai.json`; the file watcher sees the change, the UI updates, a
+  notification fires. No new data path — the elegant payoff of building on the
+  plugin's contract.
+- **Completion detection without headless output parsing:** the plugin's own
+  hooks are the signal. The app tails `events.jsonl`; the `Stop`/`SessionEnd`
+  events for the spawned session (matched by cwd/session start time) mark the
+  run finished — then notify, log, and optionally close the pane. The plugin's
+  observability loop doubles as the scheduler's telemetry.
 - **Scheduling:** the app UI owns the schedule ("every 2 h during work hours,"
   "nightly at 2 am") and registers a launchd LaunchAgent
-  (`StartCalendarInterval`) via `SMAppService.agent` (macOS 13+) pointing at a
-  bundled CLI helper — true run-even-if-the-app-was-quit behavior, no launchctl
-  for the user.
-- **Skill/plugin selection:** user picks the command/prompt per schedule slot
-  (default `/overboard`; power users add their own slash commands or
-  `--append-system-prompt` variants). Keep the invocation string user-editable —
-  also the hedge against `claude` CLI flag churn.
-- **Run history:** log each run (start/end, exit code, truncated transcript) to
-  `~/Library/Application Support/Overboard/runs/` and surface a Runs pane with
-  failures highlighted.
-- **Honest caveats to document:** headless runs consume Max/Pro plan limits;
-  runs need `claude` on PATH and a valid login; a run can take minutes —
-  serialize runs, never overlap.
-- **Effort:** M (1.5–2 wk incl. UI, launchd, run log). **Value: highest of any
+  (`StartCalendarInterval`) via `SMAppService.agent` (macOS 13+) that launches
+  the app (e.g. via `overboard://run/<slot>`) if it isn't running, which then
+  opens the embedded session. LaunchAgents run inside the user's GUI login
+  session, which is exactly what an interactive terminal session needs.
+- **Skill/plugin selection:** user picks the slash command / initial prompt per
+  schedule slot (default `/overboard`; power users add their own commands).
+  Keep the typed invocation user-editable — also the hedge against CLI churn.
+- **Run history:** log each run (start/end, how it ended, scrollback capture) to
+  `~/Library/Application Support/Overboard/runs/` and surface failures in the
+  Runs pane.
+- **Honest caveats to document:** scheduled sessions consume Max/Pro plan
+  limits; runs need `claude` on PATH and a logged-in CLI; the user must be
+  logged into their Mac (GUI session) for a session to spawn — which is why
+  keep-awake (§2.2) is the scheduler's sibling feature; a run can take minutes —
+  serialize runs, never overlap; an interactive session may hit a permission
+  prompt and stall, so surface "session waiting for input" as a notification
+  rather than pretending it can't happen.
+- **Effort:** M–L (2–3 wk incl. SwiftTerm integration, launchd, run history).
+  Slightly more than a headless design would have been — the PTY/terminal
+  embedding is the added cost — but it is the only design consistent with the
+  Max-subscription-only principle, and the visible session is *better* product:
+  the user can watch their chief of staff work. **Value: highest of any
   candidate.**
 
 ### 2.2 Keep-awake / scheduled wake — **keep-awake in v1 (S); real wake in v1.1 (M)**
@@ -317,10 +350,11 @@ not the transport.
    a time," and have the app back off (re-probe) when it sees a `state.json`
    change it didn't author.
 3. **Claude Code surface churn:** hook payload fields, transcript JSONL format
-   under `~/.claude/projects`, and `claude -p` flags are informally versioned
-   upstream. Hooks absorb the first; the app owns transcript + headless-CLI
-   risk — keep both behind small adapters, keep the scheduler command
-   user-editable, and lean on Sparkle for fast fixes.
+   under `~/.claude/projects`, and the interactive `claude` CLI invocation are
+   informally versioned upstream. Hooks absorb the first; the app owns the
+   transcript-format and CLI-invocation risk — keep both behind small adapters,
+   keep the scheduler's typed command user-editable, and lean on Sparkle for
+   fast fixes.
 4. **Free-rides-free tension:** the web dashboard is genuinely good and free. A
    "native viewer only" v1 would not sell — the automation tier *is* the
    product. Conversely, resist gating plugin improvements behind the app.
@@ -340,7 +374,7 @@ not the transport.
 | **0 — Contract** | `SCHEMA.md` from `store.py`/`events.py`/hooks/HTTP API; fixture corpus + golden views from the Python implementation | 1 wk |
 | **1 — Native viewer + presence** (private alpha) | Codable models w/ lossless round-trip; directory DispatchSource + JSONL tailing; sidebar w/ activity grids, project detail, recent-work cards, AI overlay, Mermaid island; menu bar; notifications; deep links. Read-only + mirror-mode mutations via localhost API | 4–6 wk |
 | **2 — Dashboard takeover** (beta) | Swift refresh engine (GitHub/Bitbucket/localgit), discovery + grouping, settings + onboarding wizard, context/launch editing, partial static-analysis port, compaction, sync-status; port-probe ownership protocol; golden-view parity tests pass | 3–4 wk |
-| **3 — Automation tier** | Scheduler (in-app + launchd via SMAppService), run history, keep-awake tied to runs + manual toggle, failure notifications | 2–3 wk |
+| **3 — Automation tier** | Scheduler spawning interactive terminal sessions (SwiftTerm embedded pane + Terminal.app/iTerm option, launchd via SMAppService — never `claude -p`), run history, keep-awake tied to runs + manual toggle, stalled-session + failure notifications | 2.5–3.5 wk |
 | **4 — Audit tier** | Transcript browser, usage view, links from activity/cards into transcripts | 2–3 wk |
 | **5 — Ship** | Lemon Squeezy checkout + activation, trial, Sparkle appcast, Developer ID + notarization CI, marketing site, 1.0 | 2 wk |
 | **v1.x** | Privileged-helper scheduled wake (`pmset`), App Intents/Shortcuts, widget via group container | as demanded |
