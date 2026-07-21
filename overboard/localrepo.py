@@ -251,6 +251,7 @@ def discover_localgit(roots: list[str]) -> list[dict]:
     configured source required. Powers local-only tracking (commits read via
     `git log`). Same pruned walk as `discover`, stopping at the first `.git`."""
     seen: dict[str, str] = {}
+    seen_repos: set = set()  # physical (dev, ino) — overlapping roots visit once
     out: list[dict] = []
     for root in roots:
         base = Path(os.path.expanduser(root))
@@ -260,6 +261,14 @@ def discover_localgit(roots: list[str]) -> list[dict]:
             p = Path(dirpath)
             if (p / ".git").is_dir():
                 dirnames[:] = []  # a repo — don't descend into it
+                try:
+                    st = os.stat(dirpath)
+                    rkey = (st.st_dev, st.st_ino)
+                except OSError:
+                    rkey = dirpath
+                if rkey in seen_repos:
+                    continue
+                seen_repos.add(rkey)
                 slug = _localgit_slug(p, seen)
                 seen[slug] = str(p)
                 try:
@@ -293,7 +302,23 @@ def resolved_roots(config: dict | None = None, extra: list | None = None) -> lis
             r = str(r).strip()
             if r and r not in roots:
                 roots.append(r)
-    return roots
+    # Dedupe by physical directory, not string: on case-insensitive filesystems
+    # (macOS default) ~/projects and ~/Projects are the same dir, and walking it
+    # twice minted duplicate "Parent__slug" repos. Nonexistent roots are kept —
+    # discover skips them.
+    uniq: list[str] = []
+    seen_dirs: set = set()
+    for r in roots:
+        try:
+            st = os.stat(os.path.expanduser(r))
+            key = (st.st_dev, st.st_ino)
+        except OSError:
+            uniq.append(r)
+            continue
+        if key not in seen_dirs:
+            seen_dirs.add(key)
+            uniq.append(r)
+    return uniq
 
 
 def update_state_links(state: dict, config: dict, sources: list[dict] | None = None,
