@@ -533,7 +533,7 @@ function renderReport(proj) {
   gcol.appendChild(activityGrid(proj.daily_counts, true));
   const gl = document.createElement("span");
   gl.className = "subtle";
-  gl.textContent = `${total} commit${total === 1 ? "" : "s"} · 30 days`;
+  gl.textContent = `${total} commit${total === 1 ? "" : "s"} · ${Math.min(30, (VIEW && VIEW.window_days) || 30)} days`;
   gcol.appendChild(gl);
   top.appendChild(gcol);
 
@@ -822,6 +822,14 @@ function renderSettingsModal(s) {
         '<label>Where your clones live <input type="text" id="local-roots" placeholder="~/projects, ~/dev/work"></label>' +
         '<p class="subtle hint">Comma-separated. Common folders (~/projects, ~/code, ~/Developer, …) are searched automatically — add any others here.</p>' +
       '</fieldset>' +
+      '<fieldset class="src">' +
+        '<legend>Tracking</legend>' +
+        '<label>Commit window (days) <input type="number" id="win-days" min="7" max="365"></label>' +
+        '<p class="subtle hint">Repos with no commits in this window drop off the board. The activity grid always shows the last 30 days.</p>' +
+        '<label><input type="checkbox" id="hide-idle"> Hide local repos idle past the window</label>' +
+        '<p class="subtle hint">Local clones with no commits in the window disappear (they return on new commits). To remove a repo for good, use its <b>hide ✕</b> — it lands in Excluded repos below.</p>' +
+      '</fieldset>' +
+      '<div id="excluded-fieldset"></div>' +
       '<div class="settings-actions"><span id="settings-status" class="subtle"></span>' +
       '<button class="btn" data-save>Save &amp; refresh</button></div>' +
     '</div>';
@@ -836,6 +844,42 @@ function renderSettingsModal(s) {
   box.querySelector("#gh-token").placeholder = s.github.token_set ? "•••• saved — blank keeps it" : "paste token";
   box.querySelector("#lg-enabled").checked = !!(s.localgit && s.localgit.enabled);
   box.querySelector("#local-roots").value = (s.local_roots || []).join(", ");
+  box.querySelector("#win-days").value = s.commit_window_days || 30;
+  box.querySelector("#hide-idle").checked = s.hide_idle_local !== false;
+
+  // Excluded repos (hide ✕ on a repo badge lands here) — built with DOM APIs so
+  // each row gets a working re-include button.
+  if ((s.excluded_repos || []).length) {
+    const fs = document.createElement("fieldset");
+    fs.className = "src";
+    const legend = document.createElement("legend");
+    legend.textContent = "Excluded repos";
+    fs.appendChild(legend);
+    for (const slug of s.excluded_repos) {
+      const row = document.createElement("p");
+      row.className = "excluded-row";
+      const name = document.createElement("span");
+      name.className = "slug";
+      name.textContent = slug;
+      row.appendChild(name);
+      const btn = document.createElement("button");
+      btn.className = "btn ghost small";
+      btn.textContent = "re-include";
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        box.querySelector("#settings-status").textContent = "Re-including & refreshing…";
+        const v = await callView("include_repo", { slug });
+        if (v) { VIEW = v; closeSettings(); render(); }
+        else {
+          btn.disabled = false;
+          box.querySelector("#settings-status").textContent = "Failed — restart the dashboard server and retry.";
+        }
+      });
+      row.appendChild(btn);
+      fs.appendChild(row);
+    }
+    box.querySelector("#excluded-fieldset").replaceWith(fs);
+  }
 
   box.querySelector("[data-close]").addEventListener("click", closeSettings);
   box.querySelector("[data-save]").addEventListener("click", () => saveSettings(box));
@@ -867,6 +911,8 @@ async function saveSettings(box) {
     },
     localgit: { enabled: box.querySelector("#lg-enabled").checked },
     local_roots: box.querySelector("#local-roots").value.split(",").map((r) => r.trim()).filter(Boolean),
+    commit_window_days: parseInt(box.querySelector("#win-days").value, 10) || null,
+    hide_idle_local: box.querySelector("#hide-idle").checked,
   };
   const v = await callView("save_settings", payload);
   if (v) {
@@ -1265,6 +1311,22 @@ function repoBadge(r) {
     loc.textContent = "remote";
     b.appendChild(loc);
   }
+
+  const hide = document.createElement("span");
+  hide.className = "loc link";
+  hide.textContent = "hide ✕";
+  hide.title = "Exclude this repo from the board (undo in Settings)";
+  hide.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!confirm("Exclude " + r.slug + " from the board?\nYou can re-include it any time in Settings.")) return;
+    const v = await callView("exclude_repo", { slug: r.slug });
+    if (v) {
+      VIEW = v;
+      if (!currentProject()) SELECTED = null; // excluded the project's last repo
+      render();
+    }
+  });
+  b.appendChild(hide);
   return b;
 }
 
