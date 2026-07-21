@@ -257,6 +257,7 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
     new_state["dismissed_reviews"] = old_state.get("dismissed_reviews", [])
     new_state["hidden_work_reviews"] = old_state.get("hidden_work_reviews", [])
     new_state["excluded_repos"] = old_state.get("excluded_repos", [])
+    new_state["excluded_projects"] = old_state.get("excluded_projects", [])
 
     window_days = config["commit_window_days"]
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
@@ -290,6 +291,11 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
     for slug in new_state["excluded_repos"]:
         repo_meta.pop(slug, None)
     projects, discovery = resolve_projects(config, repo_meta, old_state)
+    # Drop excluded projects (and all their repos) after grouping, so a single
+    # project-level exclusion hides every repo regardless of how many there are.
+    excluded_projs = set(new_state["excluded_projects"])
+    if excluded_projs:
+        projects = [p for p in projects if p["name"] not in excluded_projs]
     new_state["discovery"] = discovery
     n_repos = sum(len(p["repos"]) for p in projects)
     debuglog.log(f"refresh: {len(projects)} project(s), {n_repos} repo(s) — fetching commits per repo")
@@ -783,6 +789,8 @@ class Api:
             "hide_idle_local": bool(fresh_config.get("hide_idle_local", True)),
             # Repo slugs the CTO excluded from the board (manage/undo here).
             "excluded_repos": sorted(self.state.get("excluded_repos") or []),
+            # Project names the CTO excluded from the board (manage/undo here).
+            "excluded_projects": sorted(self.state.get("excluded_projects") or []),
         }
 
     def detect_roots(self) -> dict:
@@ -888,6 +896,27 @@ class Api:
         lst = self.state.setdefault("excluded_repos", [])
         if slug in lst:
             lst.remove(slug)
+            store.save_state(self.state)
+        return self.refresh()
+
+    def exclude_project(self, project: str) -> dict:
+        """Exclude an entire project (and all its repos) from the board.
+        Instant: the project is pruned from in-memory state, no refetch needed."""
+        lst = self.state.setdefault("excluded_projects", [])
+        if project not in lst:
+            lst.append(project)
+        self.state.get("projects", {}).pop(project, None)
+        order = self.state.get("project_order") or []
+        self.state["project_order"] = [p for p in order if p != project]
+        store.save_state(self.state)
+        return self._build_view()
+
+    def include_project(self, project: str) -> dict:
+        """Undo a project exclusion (Settings). Triggers a full refresh so the
+        project's repos are fetched back from source."""
+        lst = self.state.setdefault("excluded_projects", [])
+        if project in lst:
+            lst.remove(project)
             store.save_state(self.state)
         return self.refresh()
 
@@ -1031,10 +1060,12 @@ class Api:
         try:
             links = localrepo.links_for_machine(self.state)
             excluded = set(self.state.get("excluded_repos") or [])
+            active = {s for p in self.state.get("projects", {}).values()
+                      for s in (p.get("repos") or {})}
             changed = 0
             skipped = 0
             for slug, path in links.items():
-                if slug in excluded:
+                if slug in excluded or slug not in active:
                     continue  # no analysis work for repos hidden from the board
                 try:
                     head = analysis.git_head(Path(path))
@@ -1071,11 +1102,13 @@ class Api:
         try:
             links = localrepo.links_for_machine(self.state)
             excluded = set(self.state.get("excluded_repos") or [])
+            active = {s for p in self.state.get("projects", {}).values()
+                      for s in (p.get("repos") or {})}
             synced = self.state.setdefault("local_sync", {}).setdefault(
                 localrepo.machine_key(), {})
             changed = False
             for slug, path in links.items():
-                if slug in excluded:
+                if slug in excluded or slug not in active:
                     continue  # no ls-remote for repos hidden from the board
                 try:
                     synced[slug] = localrepo.sync_status(Path(path))
@@ -1104,7 +1137,7 @@ def _make_handler(api: "Api"):
     web_dir = Path(__file__).resolve().parent / "web"
     ALLOWED = {"get_view", "refresh", "tick", "rescan_local", "analyze",
                "get_analysis", "open_terminal", "dismiss_review", "hide_work_review",
-               "exclude_repo", "include_repo",
+               "exclude_repo", "include_repo", "exclude_project", "include_project",
                "get_settings", "save_settings", "detect_roots",
                "get_context", "set_active_launch", "update_active_launch",
                "pushback_launch", "complete_launch", "save_vision",

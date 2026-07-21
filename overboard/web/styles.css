@@ -143,6 +143,8 @@ html, body {
 }
 .rep-top-main h2 .chip { font-size: 12px; font-weight: 400; }
 .rename-btn { padding: 2px 8px; font-size: 12px; }
+.hide-proj-btn { padding: 2px 8px; font-size: 12px; }
+.btn.ghost.hide-proj-btn:hover { color: var(--red); border-color: var(--red); }
 .rename-input {
   font-size: 20px; font-weight: 600; font-family: inherit;
   background: var(--panel-2); border: 1px solid var(--accent);

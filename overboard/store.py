@@ -205,6 +205,9 @@ def fresh_state() -> dict:
         # Dashboard-owned; explicit — an excluded repo stays hidden even if it
         # becomes active again, until re-included in Settings.
         "excluded_repos": [],
+        # Project names the CTO has excluded from the board entirely (all repos
+        # under the project are hidden). Dashboard-owned; undo in Settings.
+        "excluded_projects": [],
     }
 
 

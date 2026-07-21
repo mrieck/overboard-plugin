@@ -510,6 +510,15 @@ function renderReport(proj) {
   rn.title = "Rename this project";
   rn.addEventListener("click", () => openRename(h, proj));
   h.appendChild(rn);
+  const hideProj = el("button", "btn ghost small hide-proj-btn", "✕");
+  hideProj.title = "Hide this project (all its repos) from the board — undo in Settings";
+  hideProj.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!confirm(`Hide project "${proj.display || proj.name}" from the board?\nAll its repos will be hidden. You can re-include it any time in Settings.`)) return;
+    const v = await callView("exclude_project", { project: proj.name });
+    if (v) { VIEW = v; SELECTED = null; render(); }
+  });
+  h.appendChild(hideProj);
   h.appendChild(chip(proj));
   if (proj.activity && proj.activity.length) {
     const ab = document.createElement("button");
@@ -830,6 +839,7 @@ function renderSettingsModal(s) {
         '<p class="subtle hint">Local clones with no commits in the window disappear (they return on new commits). To remove a repo for good, use its <b>hide ✕</b> — it lands in Excluded repos below.</p>' +
       '</fieldset>' +
       '<div id="excluded-fieldset"></div>' +
+      '<div id="excluded-projects-fieldset"></div>' +
       '<div class="settings-actions"><span id="settings-status" class="subtle"></span>' +
       '<button class="btn" data-save>Save &amp; refresh</button></div>' +
     '</div>';
@@ -879,6 +889,39 @@ function renderSettingsModal(s) {
       fs.appendChild(row);
     }
     box.querySelector("#excluded-fieldset").replaceWith(fs);
+  }
+
+  // Excluded projects (hide project ✕ in the detail header lands here).
+  if ((s.excluded_projects || []).length) {
+    const fs = document.createElement("fieldset");
+    fs.className = "src";
+    const legend = document.createElement("legend");
+    legend.textContent = "Excluded projects";
+    fs.appendChild(legend);
+    for (const project of s.excluded_projects) {
+      const row = document.createElement("p");
+      row.className = "excluded-row";
+      const name = document.createElement("span");
+      name.className = "slug";
+      name.textContent = project;
+      row.appendChild(name);
+      const btn = document.createElement("button");
+      btn.className = "btn ghost small";
+      btn.textContent = "re-include";
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        box.querySelector("#settings-status").textContent = "Re-including & refreshing…";
+        const v = await callView("include_project", { project });
+        if (v) { VIEW = v; closeSettings(); render(); }
+        else {
+          btn.disabled = false;
+          box.querySelector("#settings-status").textContent = "Failed — restart the dashboard server and retry.";
+        }
+      });
+      row.appendChild(btn);
+      fs.appendChild(row);
+    }
+    box.querySelector("#excluded-projects-fieldset").replaceWith(fs);
   }
 
   box.querySelector("[data-close]").addEventListener("click", closeSettings);
@@ -1312,21 +1355,6 @@ function repoBadge(r) {
     b.appendChild(loc);
   }
 
-  const hide = document.createElement("span");
-  hide.className = "loc link";
-  hide.textContent = "hide ✕";
-  hide.title = "Exclude this repo from the board (undo in Settings)";
-  hide.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    if (!confirm("Exclude " + r.slug + " from the board?\nYou can re-include it any time in Settings.")) return;
-    const v = await callView("exclude_repo", { slug: r.slug });
-    if (v) {
-      VIEW = v;
-      if (!currentProject()) SELECTED = null; // excluded the project's last repo
-      render();
-    }
-  });
-  b.appendChild(hide);
   return b;
 }
 
