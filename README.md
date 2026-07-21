@@ -54,8 +54,11 @@ It has two parts in one repo:
 
 The assistant is **event-gated**: `get_pending_work` only returns projects that
 changed (new finished work, or new commits), so idle projects cost nothing — not
-even a Max-sub turn. Bitbucket commits are the cross-machine baseline, so work you
-did on other machines and pushed still shows up.
+even a Max-sub turn. Heavy analysis is additionally **budget-throttled**: only a
+couple of projects get the in-depth treatment (panel extraction, first work
+reviews) per half-hour window, so a fresh install trickles in over a few passes
+instead of analyzing every repo at once. Bitbucket commits are the cross-machine
+baseline, so work you did on other machines and pushed still shows up.
 
 **Three files, no write races:** the dashboard owns `state.json`; the assistant
 owns `ai.json`; `events.jsonl` is append-only. The dashboard reads `ai.json` but

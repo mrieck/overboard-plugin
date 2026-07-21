@@ -228,6 +228,10 @@ def fresh_ai() -> dict:
     # All agent-owned, keyed by name (summaries/digests) or repo slug
     # (architecture/prompts/setup/snippets). Written only via the MCP set_*
     # tools; the dashboard overlays these onto the static analysis at read time.
+    # Panel entries (architecture/prompts/setup/snippets/data_shape) carry
+    # {..., "at": iso, "head": <repo head at write time>} — the head anchors
+    # staleness in manager.pending_work (need_panels) and, with "at", drives the
+    # heavy-work budget; the dashboard ignores it.
     return {
         "summaries": {},
         "digests": {},
@@ -237,7 +241,7 @@ def fresh_ai() -> dict:
         "snippets": {},
         # AI-decided data shape per repo slug (universal across stacks: SQL tables,
         # Mongo collections, JPA/EF entities, ORM models). Overlays the static
-        # scanner. { slug: {"items": [...], "at": iso} }
+        # scanner. { slug: {"items": [...], "at": iso, "head": str} }
         "data_shape": {},
         # Recent-work review cards per project — the assistant's per-sprint delta
         # layer (what just landed: decisions, new surface, key code). Written via

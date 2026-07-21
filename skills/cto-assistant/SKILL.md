@@ -22,9 +22,13 @@ that's the whole point.
 
 Run this each pass (it's what `/overboard` and the `/loop` call do):
 
-1. **`get_pending_work()`** — your to-do list. Each entry has `project`, its repo
-   `repos` (slugs), and `need_summary` / `need_digest`. **If it's empty, stop —
-   nothing changed, don't spend a turn.**
+1. **`get_pending_work()`** — your to-do list. It returns `{items, first_run,
+   heavy_budget, deferred, notice}`; each item has `project`, its repo `repos`
+   (slugs), and the `need_*` flags. **If `items` is empty, stop — nothing
+   changed, don't spend a turn.** If `notice` is non-empty, **relay it to the
+   CTO** in your reply. **Never call `get_pending_work` a second time within a
+   pass** — the heavy-work budget is per-window; re-calling won't grant more
+   slots (see *First run & the heavy-work budget* below).
 2. **Grouping first.** If the list includes a `{kind:"grouping", need_grouping:true,
    all_repos, ungrouped}` item, decide how the repos cluster into real products and
    call **`set_grouping(groups)`** before anything else — see *Grouping* below. Until
@@ -44,8 +48,11 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
      finished work; if they look unmet or the date has slipped, **`flag_for_review`
      ONE specific thing** (see *Launch & vision*). The nudge self-suppresses for
      the rest of the day once you've flagged that project, so don't re-flag.
-   - **Refresh the dashboard panels** for each *local* repo (see *Maintaining
-     the panels* below) — real prompts, setup/run, snippets, architecture.
+   - If **`need_panels`**: refresh the dashboard panels for exactly the repos in
+     **`panel_repos`** (see *Maintaining the panels* below) — real prompts,
+     setup/run, snippets, architecture. If `need_panels` is false or absent,
+     **don't touch the panels** — the server tracks which repos are analyzed and
+     which HEADs moved; there is nothing for you to judge.
    - **Mind the CTO's plans**: each pending entry already carries `launch`
      (type, title, days_until, status) — let it shape what you write and flag.
      Call `get_project_context(project)` only when you need the full plan — goals,
@@ -63,6 +70,30 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
 
 Then you're done until the next pass. Under `/loop`, only act when
 `get_pending_work` returns something — idle projects should cost nothing.
+
+## First run & the heavy-work budget
+
+Heavy AI work — panel extraction via `repo-analyst`, and a project's
+**first-ever** work review — is server-budgeted: `get_pending_work` grants it to
+at most `heavy_budget` projects per ~30-minute window and defers the rest
+(`deferred_heavy: true` on the item, names listed in `deferred`). This protects
+the CTO's subscription — a fresh board fills in over a few passes instead of
+burning everything at once. Trust the gate:
+
+- **Granted** projects (`need_panels` / `need_review` set): full treatment —
+  subagents, Mermaid, the works.
+- **Deferred** projects: do ONLY the cheap flags they still carry
+  (`need_summary` / `need_digest` / `need_launch`). No `repo-analyst`, no
+  `work-reviewer`, no Mermaid, no architecture prose. They come back with a
+  grant on a later pass.
+- On **`first_run`** (empty board): write a summary for EVERY project in
+  `items`, grounded in `get_commits` plus **at most one** Read of the repo's
+  `CLAUDE.md` or `README` (path from `list_projects`) — no other repo reading.
+  Then tell the CTO explicitly, e.g.: *"First run: I analyzed 2 of 9 projects in
+  depth; the rest get quick summaries now and the dashboard fills in over the
+  next few passes."*
+- Never re-call `get_pending_work` mid-pass to fish for more slots; the window
+  only opens between loop wakeups.
 
 ## Grouping (name the projects)
 
@@ -94,28 +125,32 @@ real analysis. Because reading a whole repo is bulky, **delegate it to the
 `repo-analyst` subagent** (it's pinned to a cheaper model) rather than reading
 everything yourself:
 
-1. Only for projects `get_pending_work` returned (i.e. worked on recently) —
-   never scan all projects at once.
-2. `list_projects` to get each repo's local `path` (skip repos with no local
-   clone on this machine).
-3. Spawn the **`repo-analyst`** subagent (via the Task tool) once per local repo,
-   giving it the `slug` and `path`. It reads the clone and returns a JSON object
-   with `prompts`, `setup`, `snippets`, `architecture`, `mermaid`, and `data_shape`
-   — it does not write anything itself.
+1. Only when a pending item has **`need_panels`**, and only for the repos in its
+   **`panel_repos`** — the server computes which panels are missing or stale
+   from the HEAD each panel was written at, so never scan other repos "while
+   you're at it".
+2. `list_projects` to get each of those repos' local `path`.
+3. Spawn the **`repo-analyst`** subagent (via the Task tool) once per repo in
+   `panel_repos`, giving it the `slug` and `path`. It reads the clone and returns
+   a JSON object with `prompts`, `setup`, `snippets`, `architecture`, `mermaid`,
+   and `data_shape` — it does not write anything itself.
 4. Persist its findings with the write tools:
    **`set_prompts(slug, items)`**, **`set_setup(slug, text)`**,
    **`set_snippets(slug, items)`**, **`set_architecture(slug, text, mermaid)`**,
    **`set_data_shape(slug, items)`**. Pass through only non-empty results.
 
-Skip a repo whose clone HEAD hasn't moved since you last refreshed it — the
-pending-work gate already keeps this to active repos, so most passes touch one or
-two repos, not ten.
+The server stamps each panel with the repo HEAD it was written at, so freshness
+is tracked for you — a repo absent from `panel_repos` is up to date. Most passes
+touch one or two repos, not ten.
 
 ## Reviewing recent work (`record_work_review`)
 
 The snapshot panels answer "what is this project" — the **Recent work cards**
-answer "what just landed, and do I agree with it". When a pending entry has
-`need_review`:
+answer "what just landed, and do I agree with it". A project's **first-ever**
+review counts against the heavy-work budget — if it was deferred, the item
+arrives with `need_review` cleared and `deferred_heavy: true`; skip reviewing it
+entirely this pass. Incremental reviews (a `review_since` hash exists) are never
+deferred. When a pending entry has `need_review`:
 
 1. The entry's **`review_since`** maps each repo slug to the last-reviewed
    commit hash (or `null` for a first-ever review), and

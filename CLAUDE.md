@@ -116,8 +116,14 @@ cards) and persists it via the MCP tools `set_prompts` / `set_setup` /
 `set_snippets` / `set_architecture` into `ai.json`. `Api._overlay_ai` layers those
 over the static result at read time: agent prompts *replace* the static ones (and
 `prompts_source` flips `static`→`agent`; the UI dims static guesses), and setup /
-snippets / architecture come straight from `ai.json`. This is gated to
-recently-active projects via `get_pending_work` — never "scan all repos at once."
+snippets / architecture come straight from `ai.json`. This is gated by
+`get_pending_work`, which computes `need_panels`/`panel_repos` from HEAD-stamped
+panel entries (each `set_*` panel tool stamps the repo `head` it was written at)
+and **budget-caps heavy work** — panels + first-ever work reviews go to at most
+`HEAVY_BUDGET` projects per `HEAVY_COOLDOWN_SECS` window (constants in
+`manager.py`; slots are inferred from recent `ai.json` write timestamps, so the
+get tool stays read-only). The rest are marked `deferred_heavy` and trickle in
+on later passes — a fresh install never "scans all repos at once."
 When adding a new agent-owned panel, follow this exact path: new `ai.json` key →
 `fresh_ai()` → a `set_*` MCP tool → `_overlay_ai` → a frontend tab.
 

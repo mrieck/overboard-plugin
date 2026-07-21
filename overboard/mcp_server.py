@@ -14,6 +14,8 @@ state.json.
 Run: python3 <plugin>/overboard/mcp_server.py
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess
@@ -62,6 +64,16 @@ def _resolve_to_slug(state: dict, name: str):
         if repos:
             return repos[0]
     return None
+
+
+def _repo_head(state: dict, slug: str) -> str:
+    """The repo's current commit head from state — stamped into panel entries
+    so manager._panels_state can tell fresh panels from stale ones."""
+    for p in state.get("projects", {}).values():
+        r = p.get("repos", {}).get(slug)
+        if r and r.get("head"):
+            return r.get("head")
+    return ""
 
 
 def _newest_stop_ts(state: dict, project: str) -> float:
@@ -319,20 +331,23 @@ def record_work_review(project: str, units=None, reviewed_heads=None):
 
 
 def set_architecture(slug: str, text: str, mermaid: str = ""):
-    if slug not in _known_slugs():
+    state = store.load_state()
+    if slug not in localrepo.links_for_machine(state):
         return f"unknown repo {slug!r} (call list_projects)"
     ai = store.load_ai()
     ai.setdefault("architecture", {})[slug] = {
         "text": (text or "").strip()[:2000],
         "mermaid": (mermaid or "").strip()[:4000],
         "at": _now_iso(),
+        "head": _repo_head(state, slug),
     }
     store.save_ai(ai)
     return f"architecture set for {slug}"
 
 
 def set_prompts(slug: str, items=None):
-    if slug not in _known_slugs():
+    state = store.load_state()
+    if slug not in localrepo.links_for_machine(state):
         return f"unknown repo {slug!r} (call list_projects)"
     clean = []
     for it in (items or []):
@@ -348,22 +363,27 @@ def set_prompts(slug: str, items=None):
             "note": str(it.get("note", ""))[:400],
         })
     ai = store.load_ai()
-    ai.setdefault("prompts", {})[slug] = {"items": clean[:40], "at": _now_iso()}
+    ai.setdefault("prompts", {})[slug] = {
+        "items": clean[:40], "at": _now_iso(), "head": _repo_head(state, slug)}
     store.save_ai(ai)
     return f"{len(clean)} prompt(s) set for {slug}"
 
 
 def set_setup(slug: str, text: str):
-    if slug not in _known_slugs():
+    state = store.load_state()
+    if slug not in localrepo.links_for_machine(state):
         return f"unknown repo {slug!r} (call list_projects)"
     ai = store.load_ai()
-    ai.setdefault("setup", {})[slug] = {"text": (text or "").strip()[:4000], "at": _now_iso()}
+    ai.setdefault("setup", {})[slug] = {
+        "text": (text or "").strip()[:4000], "at": _now_iso(),
+        "head": _repo_head(state, slug)}
     store.save_ai(ai)
     return f"setup set for {slug}"
 
 
 def set_snippets(slug: str, items=None):
-    if slug not in _known_slugs():
+    state = store.load_state()
+    if slug not in localrepo.links_for_machine(state):
         return f"unknown repo {slug!r} (call list_projects)"
     clean = []
     for it in (items or []):
@@ -378,13 +398,15 @@ def set_snippets(slug: str, items=None):
             "note": str(it.get("note", ""))[:400],
         })
     ai = store.load_ai()
-    ai.setdefault("snippets", {})[slug] = {"items": clean[:20], "at": _now_iso()}
+    ai.setdefault("snippets", {})[slug] = {
+        "items": clean[:20], "at": _now_iso(), "head": _repo_head(state, slug)}
     store.save_ai(ai)
     return f"{len(clean)} snippet(s) set for {slug}"
 
 
 def set_data_shape(slug: str, items=None):
-    if slug not in _known_slugs():
+    state = store.load_state()
+    if slug not in localrepo.links_for_machine(state):
         return f"unknown repo {slug!r} (call list_projects)"
     clean = []
     for it in (items or []):
@@ -401,7 +423,8 @@ def set_data_shape(slug: str, items=None):
             "note": str(it.get("note", ""))[:400],
         })
     ai = store.load_ai()
-    ai.setdefault("data_shape", {})[slug] = {"items": clean[:60], "at": _now_iso()}
+    ai.setdefault("data_shape", {})[slug] = {
+        "items": clean[:60], "at": _now_iso(), "head": _repo_head(state, slug)}
     store.save_ai(ai)
     return f"{len(clean)} data-shape item(s) set for {slug}"
 
@@ -492,7 +515,7 @@ _S = {"type": "string"}
 _I = {"type": "integer"}
 _OBJ_ARR = {"type": "array", "items": {"type": "object"}}
 TOOLS = [
-    ("get_pending_work", "Your to-do list. Each entry is a project needing attention, with need_summary (commits changed), need_digest (new finished work), need_review (work landed since the last recent-work review — see record_work_review; review_since maps each repo slug to the last-reviewed hash or null, and recent_review_titles lists prior card titles for theme-name consistency), and/or need_launch (the CTO's active launch is overdue or due within 7 days — surfaced even when NO code moved, so a quiet-but-late project still reaches you), plus its repo slugs. Entries carry `launch` {type, title, target_date, days_until, status ('overdue'|'due_soon'|null)} when the CTO has an active launch — use it to ground your prose; on need_launch, check the launch goals against recent commits/finished work and, if they look unmet or slipped, flag_for_review ONE specific thing (a need_launch nudge is suppressed for the rest of the day once you've flagged that project, so it won't spam the loop). Call get_project_context when you need the full plan (goals, push-back history, vision). May also include a grouping item {kind:'grouping', need_grouping:true, all_repos:[...], ungrouped:[...]} — handle it FIRST by calling set_grouping so projects are named right. Start every update pass here; if empty, nothing to do.", {}, [], get_pending_work),
+    ("get_pending_work", "Your to-do list. Returns {items, first_run, heavy_budget, deferred, notice}. Each item is a project needing attention, with need_summary (commits changed), need_digest (new finished work), need_review (work landed since the last recent-work review — see record_work_review; review_since maps each repo slug to the last-reviewed hash or null, first_review means no prior review exists, and recent_review_titles lists prior card titles for theme-name consistency), need_panels (dashboard panels missing or stale — spawn the repo-analyst subagent for EXACTLY the repos in panel_repos, no others), and/or need_launch (the CTO's active launch is overdue or due within 7 days — surfaced even when NO code moved, so a quiet-but-late project still reaches you), plus its repo slugs. HEAVY WORK IS BUDGETED: the server grants panels + first-ever reviews to at most heavy_budget projects per ~30-min window; a deferred project carries deferred_heavy:true with those flags cleared — do NOT analyze it, it returns with a grant on a later pass ('deferred' lists everything postponed). first_run means the board is empty: write cheap summaries for ALL items, heavy analysis only where granted. ALWAYS relay 'notice' to the user when non-empty. Never re-call this tool within a pass to get more slots. Entries carry `launch` {type, title, target_date, days_until, status ('overdue'|'due_soon'|null)} when the CTO has an active launch — use it to ground your prose; on need_launch, check the launch goals against recent commits/finished work and, if they look unmet or slipped, flag_for_review ONE specific thing (a need_launch nudge is suppressed for the rest of the day once you've flagged that project, so it won't spam the loop). Call get_project_context when you need the full plan (goals, push-back history, vision). items may also include a grouping entry {kind:'grouping', need_grouping:true, all_repos:[...], ungrouped:[...]} — handle it FIRST by calling set_grouping so projects are named right. Start every update pass here; if items is empty, nothing to do.", {}, [], get_pending_work),
     ("list_projects", "Repo slugs Overboard tracks on this machine + local paths. Use the slug for get_repo_analysis / get_commits / set_architecture.", {}, [], list_projects),
     ("get_commits", "Recent Bitbucket commits for a repo (includes work pushed from other machines). Basis for a commit-status summary.", {"slug": _S, "limit": _I}, ["slug"], get_commits),
     ("get_recent_diff", "Real diff for a repo with NO local clone on THIS machine (e.g. a Mac-only iOS app seen from the Linux/DO box). Fetches the unified diff for review_since..head straight from the provider (GitHub compare / Bitbucket diff) so you can build a real source:'diffs' recent-work card instead of a messages-only one. slug is a repo slug; since = review_since[slug] (the last-reviewed hash; omit for a bounded first review). Returns {source:'diffs', base, head, patch, files, truncated} — review the patch yourself and call record_work_review with reviewed_heads={slug: head}. If it returns an 'error' (no creds / force-push / provider down), fall back to get_commits with source:'messages'. When a local clone DOES exist, prefer the work-reviewer subagent instead.", {"slug": _S, "since": _S}, ["slug"], get_recent_diff),

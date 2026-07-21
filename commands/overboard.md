@@ -16,9 +16,14 @@ server isn't connected — tell the user to check `/mcp`, and stop.
 
 ## 2. Run one full update pass now
 
-Follow the `cto-assistant` skill's routine: call `get_pending_work`, and for
-each project write its summary / digest / architecture with the Overboard MCP
-tools, flagging anything the CTO should review. You are the brain — do the
+Follow the `cto-assistant` skill's routine: call `get_pending_work` and work
+through its `items` with the Overboard MCP tools, flagging anything the CTO
+should review. **Respect the server's heavy-work budget**: in-depth analysis
+(panels, first reviews) only for the projects it granted, cheap
+summaries/digests for the rest — anything marked `deferred_heavy` waits for a
+later pass. If the response has `first_run` or a non-empty `notice`, **tell the
+user directly** — e.g. "First run: I analyzed 2 of 9 projects in depth; the
+dashboard fills in over the next few passes." You are the brain — do the
 inference yourself; never call an external API.
 
 ## 3. Put yourself on a loop
@@ -27,9 +32,10 @@ Then invoke the `/loop` skill with **no interval** (self-paced) and this prompt 
 the dashboard stays current while the user leaves the terminal open:
 
 > Run one Overboard update pass per the cto-assistant skill: call
-> `get_pending_work`; if it's empty, there's nothing new — wait and check again
-> later; otherwise update only the projects it lists, then flag anything worth
-> the CTO's attention.
+> `get_pending_work`; if its `items` is empty, there's nothing new — wait and
+> check again later; otherwise update only the projects it lists, honoring its
+> heavy-work budget (skip anything marked deferred — it returns on a later
+> pass), then flag anything worth the CTO's attention.
 
 Tell the user the dashboard is open and you're now watching their team's
 projects; they can press Ctrl-C to stop.
