@@ -142,11 +142,13 @@ style + the event-gated loop rule). Any working Claude can also call
 ## Configuration
 
 Sources & tokens live in the **⚙ Settings** panel (→
-`~/.cache/overboard/credentials.json`). Non-secret app config is in
-`overboard/projects.json` — `refresh_interval_minutes`, `commit_window_days`, and
-optional `local_roots` (default `["~/Sites"]`) for where local clones are
-discovered (both `bitbucket.org` and `github.com` clones under those roots are
-matched). Files under `~/.cache/overboard/`: `credentials.json` (sources/tokens),
+`~/.cache/overboard/credentials.json`). The commit window (how many days of
+inactivity before a repo drops off the board) is adjustable in Settings too.
+Non-secret app defaults are in `overboard/projects.json` —
+`refresh_interval_minutes`, `commit_window_days`, and optional `local_roots`
+(defaults include `~/projects`, `~/code`, `~/Developer`, …) for where local
+clones are discovered (both `bitbucket.org` and `github.com` clones under those
+roots are matched). Files under `~/.cache/overboard/`: `credentials.json` (sources/tokens),
 `state.json` (dashboard-owned: commits, analysis, local links, activity),
 `ai.json` (agent-owned: summaries, digests, architecture/prompts/setup/snippets),
 `context.json` (CTO-owned: per-project launch/milestone + vision),

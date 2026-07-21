@@ -18,8 +18,9 @@ from pathlib import Path
 # walk never descends into a repo or noise dirs, so listing several is cheap. Users
 # can override with `local_roots` in Settings / projects.json.
 DEFAULT_ROOTS = [
-    "~/Sites", "~/projects", "~/Projects", "~/dev", "~/Dev", "~/code", "~/Code",
-    "~/work", "~/Work", "~/src", "~/repos", "~/git", "~/Documents/GitHub",
+    "~/projects", "~/Projects", "~/code", "~/Code", "~/dev", "~/Dev", "~/src",
+    "~/repos", "~/git", "~/work", "~/Work", "~/workspace", "~/Developer",
+    "~/Documents/GitHub", "~/Sites",
 ]
 
 # Map an Overboard provider to the host its clones use, so discovery can tell a

@@ -1,5 +1,4 @@
 {
-  "workspace": "mrieck81",
   "refresh_interval_minutes": 60,
   "commit_window_days": 30,
   "day_start_hour": 5

@@ -807,7 +807,7 @@ function renderSettingsModal(s) {
     '<div class="settings-body">' +
       '<fieldset class="src">' +
         '<legend><label><input type="checkbox" id="bb-enabled"> Bitbucket</label></legend>' +
-        '<label>Workspace <input type="text" id="bb-workspace" placeholder="e.g. mrieck81"></label>' +
+        '<label>Workspace <input type="text" id="bb-workspace" placeholder="your-workspace"></label>' +
         '<label>Email <input type="text" id="bb-email" placeholder="you@example.com"></label>' +
         '<label>API token <input type="password" id="bb-token"></label>' +
       '</fieldset>' +
@@ -819,8 +819,8 @@ function renderSettingsModal(s) {
       '<fieldset class="src">' +
         '<legend><label><input type="checkbox" id="lg-enabled"> Local git (no API key)</label></legend>' +
         '<p class="subtle hint">Track every clone under the folders below by reading its <code>git log</code> — no token needed. A repo also on GitHub/Bitbucket keeps that as its commit source.</p>' +
-        '<label>Where your clones live <input type="text" id="local-roots" placeholder="~/Sites, ~/dev/work"></label>' +
-        '<p class="subtle hint">Comma-separated. Common folders (~/Sites, ~/projects, ~/code, …) are searched automatically — add any others here.</p>' +
+        '<label>Where your clones live <input type="text" id="local-roots" placeholder="~/projects, ~/dev/work"></label>' +
+        '<p class="subtle hint">Comma-separated. Common folders (~/projects, ~/code, ~/Developer, …) are searched automatically — add any others here.</p>' +
       '</fieldset>' +
       '<div class="settings-actions"><span id="settings-status" class="subtle"></span>' +
       '<button class="btn" data-save>Save &amp; refresh</button></div>' +
@@ -1070,7 +1070,7 @@ function bbTokenPanel() {
       "<li>Click <b>Create API token</b>, name it “Overboard”, and copy it.</li>" +
       "<li>Enter your workspace id and your Atlassian account email below.</li>" +
     "</ol>" +
-    '<label>Workspace <input type="text" id="wiz-bb-workspace" placeholder="e.g. mrieck81"></label>' +
+    '<label>Workspace <input type="text" id="wiz-bb-workspace" placeholder="your-workspace"></label>' +
     '<label>Email <input type="text" id="wiz-bb-email" placeholder="you@example.com"></label>' +
     '<label>API token <input type="password" id="wiz-bb-token"></label>';
   fs.querySelector("#wiz-bb-workspace").value = WIZARD.bb.workspace || "";
@@ -1121,7 +1121,7 @@ function drawFinishStep(body) {
   const ul = el("ul", "wiz-summary");
   ul.appendChild(el("li", null, "Sources: " + modes.join(", ")));
   const roots = selectedRoots();
-  ul.appendChild(el("li", null, "Folders: " + (roots.length ? roots.join(", ") : "common defaults (~/Sites, ~/code, …)")));
+  ul.appendChild(el("li", null, "Folders: " + (roots.length ? roots.join(", ") : "common defaults (~/projects, ~/code, …)")));
   body.appendChild(ul);
   if (WIZARD.prov.localgit) {
     body.appendChild(el("p", "subtle",
