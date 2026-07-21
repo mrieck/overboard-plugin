@@ -52,8 +52,14 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
 ## No write races (files under `~/.cache/overboard/`)
 
 - `state.json` — **dashboard-owned** (commits, analysis, local links, activity,
-  plus the user's dismissals: `dismissed_reviews` and `hidden_work_reviews`).
-  The MCP server never writes it.
+  plus the user's dismissals: `dismissed_reviews`, `hidden_work_reviews`, and
+  `excluded_repos` — slugs hidden via a repo badge's "hide ✕", filtered out of
+  `repo_meta` in `perform_refresh` so every downstream consumer stays clean;
+  re-include in Settings). The MCP server never writes it.
+  Tracking knobs (`commit_window_days` override, `hide_idle_local` — local
+  clones idle past the window are skipped at injection, default on) persist in
+  `credentials.json` and are overlaid by `store.load_config`; never write user
+  settings into `projects.json` (it lives inside the git checkout).
 - `ai.json` — **assistant-owned** (summaries, digests, architecture, and
   `work_reviews` — the per-sprint "recent work" cards). Written only
   via the `set_*`/`record_*` MCP tools; the dashboard reads but never writes it.
