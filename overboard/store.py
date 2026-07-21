@@ -166,6 +166,17 @@ def load_config() -> dict:
     # A "day" for the activity grid begins at this local hour (so e.g. a 2am
     # commit counts toward the previous day). Default 5am.
     config.setdefault("day_start_hour", 5)
+
+    # Machine-local overrides from the Settings panel live in credentials.json —
+    # projects.json ships inside the git checkout, so user knobs never write it.
+    cred = load_credentials()
+    try:
+        window = int(cred.get("commit_window_days") or 0)
+    except (TypeError, ValueError):
+        window = 0
+    if window:
+        config["commit_window_days"] = max(7, min(365, window))
+    config["hide_idle_local"] = bool(cred.get("hide_idle_local", True))
     return config
 
 
@@ -190,6 +201,10 @@ def fresh_state() -> dict:
         # Server-assigned ids of recent-work cards the user has hidden (✕).
         # Dashboard-owned; the cards themselves live in ai.json work_reviews.
         "hidden_work_reviews": [],
+        # Repo slugs the CTO has excluded from the board (defunct/abandoned).
+        # Dashboard-owned; explicit — an excluded repo stays hidden even if it
+        # becomes active again, until re-included in Settings.
+        "excluded_repos": [],
     }
 
 

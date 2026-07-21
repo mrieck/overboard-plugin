@@ -122,14 +122,19 @@ def _gather_active_repos(sources, sessions, cutoff) -> tuple[dict, list[str]]:
     return meta, errors
 
 
-def _inject_localgit_repos(repo_meta: dict, config: dict) -> int:
+def _inject_localgit_repos(repo_meta: dict, config: dict, cutoff=None) -> tuple:
     """Merge locally-discovered clones (local-only mode) into `repo_meta`. A slug
     not already seen from an API source is added as a provider:'localgit' repo
     (commits read from local git); a slug already present from Bitbucket/GitHub is
     left as-is (that stays the commit source, so commits pushed from other
     machines still count) and just records the local path + 'localgit' in
-    also_providers (hybrid). Returns how many new localgit repos were added."""
-    injected = 0
+    also_providers (hybrid). With `hide_idle_local` (Settings, default on) a clone
+    whose head commit predates `cutoff` is skipped — the localgit mirror of how
+    the API providers already drop repos quiet past the window. Clones with no
+    parseable head date (fresh/empty repos being set up) are always kept.
+    Returns (injected, hidden_idle) counts."""
+    injected = hidden = 0
+    hide_idle = bool(config.get("hide_idle_local")) and cutoff is not None
     for d in localrepo.discover_localgit(localrepo.resolved_roots(config)):
         slug, path, branch = d["slug"], d["path"], d.get("branch") or ""
         prev = repo_meta.get(slug)
@@ -139,6 +144,11 @@ def _inject_localgit_repos(repo_meta: dict, config: dict) -> int:
                 head = localgit.fetch_recent_commits(path, branch, 1)
             except providers.ProviderError:
                 head = []
+            if hide_idle:
+                head_dt = _parse_date(head[0]["date"]) if head else None
+                if head_dt is not None and head_dt < cutoff:
+                    hidden += 1
+                    continue
             repo_meta[slug] = {
                 "provider": "localgit", "workspace": "", "slug": slug,
                 "branch": branch or "main", "path": path,
@@ -151,7 +161,7 @@ def _inject_localgit_repos(repo_meta: dict, config: dict) -> int:
                 aps = prev.setdefault("also_providers", [])
                 if "localgit" not in aps:
                     aps.append("localgit")
-    return injected
+    return injected, hidden
 
 
 def _resolve_grouping(slugs: list[str], old_state: dict) -> dict:
@@ -246,6 +256,7 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
     new_state["analysis"] = old_state.get("analysis", {})
     new_state["dismissed_reviews"] = old_state.get("dismissed_reviews", [])
     new_state["hidden_work_reviews"] = old_state.get("hidden_work_reviews", [])
+    new_state["excluded_repos"] = old_state.get("excluded_repos", [])
 
     window_days = config["commit_window_days"]
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
@@ -270,8 +281,14 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
         repo_meta, source_errors = _gather_active_repos(sources, sessions, cutoff)
     if any(s.get("provider") == "localgit" for s in sources):
         with debuglog.timer("refresh: discover local clones (localgit)"):
-            n = _inject_localgit_repos(repo_meta, config)
-        debuglog.log(f"refresh: localgit injected {n} local-only repo(s)")
+            n, n_idle = _inject_localgit_repos(repo_meta, config, cutoff)
+        debuglog.log(f"refresh: localgit injected {n} local-only repo(s), hid {n_idle} idle")
+    # Drop excluded repos before grouping, so state/projects, the view, and every
+    # MCP tool downstream are all clean. Keyed by bare slug: after the dedup/merge
+    # above, an API repo and its local clone are one record — excluding a slug
+    # hides that repo everywhere (undo in Settings).
+    for slug in new_state["excluded_repos"]:
+        repo_meta.pop(slug, None)
     projects, discovery = resolve_projects(config, repo_meta, old_state)
     new_state["discovery"] = discovery
     n_repos = sum(len(p["repos"]) for p in projects)
@@ -735,6 +752,9 @@ class Api:
     def get_settings(self) -> dict:
         """Current provider config with tokens masked — never returns secrets."""
         cred = store.load_credentials()
+        # Read fresh so the modal shows effective values even if another writer
+        # (or an older session) changed credentials since startup.
+        fresh_config = store.load_config()
         bb = dict(cred.get("bitbucket") or {})
         gh = dict(cred.get("github") or {})
         # Reflect a legacy (.env-derived) Bitbucket source even before it's been
@@ -758,6 +778,11 @@ class Api:
             # Machine-local extra folders to hunt for clones (on top of the common
             # defaults). Shown so the user can add non-standard locations.
             "local_roots": list(cred.get("local_roots") or []),
+            # Tracking knobs (credentials.json overrides overlaid by load_config).
+            "commit_window_days": fresh_config.get("commit_window_days", 30),
+            "hide_idle_local": bool(fresh_config.get("hide_idle_local", True)),
+            # Repo slugs the CTO excluded from the board (manage/undo here).
+            "excluded_repos": sorted(self.state.get("excluded_repos") or []),
         }
 
     def detect_roots(self) -> dict:
@@ -766,7 +791,8 @@ class Api:
         return {"candidates": _detect_candidate_roots()}
 
     def save_settings(self, bitbucket: dict | None = None, github: dict | None = None,
-                      localgit: dict | None = None, local_roots: list | None = None) -> dict:
+                      localgit: dict | None = None, local_roots: list | None = None,
+                      commit_window_days=None, hide_idle_local=None) -> dict:
         """Write credentials.json (a blank token keeps the existing one),
         rebuild sources, rediscover local clones, and refresh."""
         cred = store.load_credentials()
@@ -796,7 +822,18 @@ class Api:
             lg["enabled"] = bool(localgit.get("enabled"))
         if local_roots is not None:
             cred["local_roots"] = [str(r).strip() for r in local_roots if str(r).strip()]
+        if commit_window_days is not None:
+            try:
+                cred["commit_window_days"] = max(7, min(365, int(commit_window_days)))
+            except (TypeError, ValueError):
+                pass
+        if hide_idle_local is not None:
+            cred["hide_idle_local"] = bool(hide_idle_local)
         store.save_credentials(cred)
+        # Api.config is loaded once at startup — reload so the new window/idle
+        # knobs (overlaid from credentials by load_config) apply to the refresh
+        # below, not just the next process.
+        self.config = store.load_config()
         self.sources = store.load_sources(self.config)
         try:
             # resolved_roots reads the just-saved machine-local roots from credentials.
@@ -825,6 +862,34 @@ class Api:
         self.state["hidden_work_reviews"] = [k for k in lst if k in live][-300:]
         store.save_state(self.state)
         return self._build_view()
+
+    def exclude_repo(self, slug: str) -> dict:
+        """Exclude a repo from the board (hide ✕ on its badge; undo in Settings).
+        Instant: the slug is pruned from the in-memory projects too, no refetch.
+        Per-project aggregates (daily_counts, days_idle) stay stale until the
+        next refresh — they have no per-repo breakdown in state; self-heals."""
+        lst = self.state.setdefault("excluded_repos", [])
+        if slug not in lst:
+            lst.append(slug)
+        for name in list(self.state.get("projects") or {}):
+            proj = self.state["projects"][name]
+            if slug in (proj.get("repos") or {}):
+                proj["repos"].pop(slug, None)
+                if not proj["repos"]:
+                    del self.state["projects"][name]
+                    self.state["project_order"] = [
+                        p for p in self.state.get("project_order", []) if p != name]
+        store.save_state(self.state)
+        return self._build_view()
+
+    def include_repo(self, slug: str) -> dict:
+        """Undo an exclusion (Settings). The repo was dropped from state, so a
+        full refresh is needed to fetch it back."""
+        lst = self.state.setdefault("excluded_repos", [])
+        if slug in lst:
+            lst.remove(slug)
+            store.save_state(self.state)
+        return self.refresh()
 
     # ---- CTO context: launches + vision (context.json, CTO-owned) -------
     def _context_view(self, project: str) -> dict:
@@ -965,9 +1030,12 @@ class Api:
             return  # one analyzer at a time is enough
         try:
             links = localrepo.links_for_machine(self.state)
+            excluded = set(self.state.get("excluded_repos") or [])
             changed = 0
             skipped = 0
             for slug, path in links.items():
+                if slug in excluded:
+                    continue  # no analysis work for repos hidden from the board
                 try:
                     head = analysis.git_head(Path(path))
                 except Exception:
@@ -1002,10 +1070,13 @@ class Api:
             return  # one sync checker at a time is enough
         try:
             links = localrepo.links_for_machine(self.state)
+            excluded = set(self.state.get("excluded_repos") or [])
             synced = self.state.setdefault("local_sync", {}).setdefault(
                 localrepo.machine_key(), {})
             changed = False
             for slug, path in links.items():
+                if slug in excluded:
+                    continue  # no ls-remote for repos hidden from the board
                 try:
                     synced[slug] = localrepo.sync_status(Path(path))
                     changed = True
@@ -1033,6 +1104,7 @@ def _make_handler(api: "Api"):
     web_dir = Path(__file__).resolve().parent / "web"
     ALLOWED = {"get_view", "refresh", "tick", "rescan_local", "analyze",
                "get_analysis", "open_terminal", "dismiss_review", "hide_work_review",
+               "exclude_repo", "include_repo",
                "get_settings", "save_settings", "detect_roots",
                "get_context", "set_active_launch", "update_active_launch",
                "pushback_launch", "complete_launch", "save_vision",
