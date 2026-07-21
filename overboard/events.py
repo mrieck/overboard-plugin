@@ -4,6 +4,8 @@ The hook is stdlib-only and writes raw events keyed by `cwd`; here (in the real
 venv) we read them, map `cwd` -> repo slug via localrepo, and hand them to the
 manager. Same on-disk path as the hook, sourced from store.STATE_DIR."""
 
+from __future__ import annotations
+
 import json
 import os
 import tempfile

@@ -6,6 +6,8 @@
 Caching is the caller's job: results carry the repo's git HEAD so a re-run only
 happens when HEAD changes (see app.Api.analyze)."""
 
+from __future__ import annotations
+
 import ast
 import os
 import re

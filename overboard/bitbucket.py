@@ -1,5 +1,7 @@
 """Bitbucket Cloud API client — stdlib only (urllib). Fetch recent commits."""
 
+from __future__ import annotations
+
 import base64
 import json
 import urllib.error
@@ -139,7 +141,8 @@ def list_active_repos(
 
 def _parse_iso(iso: str):
     try:
-        return datetime.fromisoformat(iso)
+        # 3.9/3.10 fromisoformat can't parse a trailing "Z"
+        return datetime.fromisoformat(iso.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
 

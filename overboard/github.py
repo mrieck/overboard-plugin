@@ -5,6 +5,8 @@ repository contents+metadata read). Unlike Bitbucket there's no email, and
 GitHub paginates via the `Link` response header rather than a `next` body field.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re

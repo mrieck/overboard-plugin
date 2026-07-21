@@ -1,5 +1,5 @@
 # Overboard runs on the Python 3 standard library — NO required dependencies.
-# Just `python3` (3.11+). Nothing to pip install.
+# Just `python3` (3.9+ — the stock macOS python3 works). Nothing to pip install.
 #
 # Optional: pywebview, only if you want a native desktop window instead of a
 # browser tab for the dashboard:

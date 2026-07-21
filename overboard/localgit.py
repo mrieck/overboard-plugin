@@ -11,6 +11,8 @@ clones are discovered by localrepo.discover_localgit and injected into the
 refresh by app._inject_localgit_repos.
 """
 
+from __future__ import annotations
+
 import subprocess
 
 from overboard import localrepo

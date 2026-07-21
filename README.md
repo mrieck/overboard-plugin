@@ -84,7 +84,7 @@ BITBUCKET_API_TOKEN=xxxxxxxx
 ```
 
 No `ANTHROPIC_API_KEY` — the `/overboard` agent does all AI on your Max/Pro sub.
-Requires `python3` 3.11+ on your PATH (Linux and macOS both have it). That's it.
+Requires `python3` 3.9+ on your PATH (stock macOS and any recent Linux qualify). That's it.
 
 ## Install the plugin in Claude Code
 

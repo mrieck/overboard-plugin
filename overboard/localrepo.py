@@ -6,6 +6,8 @@ machine's node name. Discovery is offline (it only reads local `.git/config`
 files); only `sync_status` talks to the network (one `git ls-remote` per call).
 """
 
+from __future__ import annotations
+
 import os
 import platform
 import subprocess

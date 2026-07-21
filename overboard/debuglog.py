@@ -11,6 +11,8 @@ Frontend timings go to the browser DevTools console instead. Stdlib-only, never
 raises — logging must never take down a refresh.
 """
 
+from __future__ import annotations
+
 import sys
 import time
 

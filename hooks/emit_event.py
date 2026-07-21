@@ -12,6 +12,8 @@ tool events — the file path or truncated command target. The dashboard/manager
 (running in the real venv) maps cwd -> repo and does any summarization later.
 """
 
+from __future__ import annotations
+
 import json
 import sys
 import time

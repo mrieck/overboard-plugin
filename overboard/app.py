@@ -4,6 +4,8 @@ Run in the panel:      python -m overboard.app        (from the parent directory
 Headless refresh:      python -m overboard.app --once
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -32,7 +34,8 @@ def _now_iso() -> str:
 
 def _parse_date(iso: str) -> datetime | None:
     try:
-        return datetime.fromisoformat(iso)
+        # 3.9/3.10 fromisoformat can't parse a trailing "Z"
+        return datetime.fromisoformat(iso.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
 

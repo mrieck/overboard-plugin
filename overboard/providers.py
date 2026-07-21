@@ -11,6 +11,8 @@ Both clients raise the shared errors from errors.py (AuthError / ProviderError),
 so callers can handle failures per-source without knowing which provider it was.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 
 from overboard import bitbucket, github, localgit

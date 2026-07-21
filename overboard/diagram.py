@@ -3,6 +3,8 @@
 Deterministic and token-free: the frontend renders the returned strings with
 mermaid.js. Empty string means "nothing to draw" (the UI hides the block)."""
 
+from __future__ import annotations
+
 import re
 
 

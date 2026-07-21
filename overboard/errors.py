@@ -5,6 +5,8 @@ github.py — and the providers facade can subclass/catch these without any
 circular-import risk.
 """
 
+from __future__ import annotations
+
 
 class ProviderError(Exception):
     def __init__(self, who: str, reason: str):

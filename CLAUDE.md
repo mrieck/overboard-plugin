@@ -42,7 +42,7 @@ an external inference API.
 
 ## Portable / stdlib-only
 
-Zero third-party deps — runs on bare `python3` 3.11+ on Linux and macOS. `urllib`
+Zero third-party deps — runs on bare `python3` 3.9+ on Linux and macOS (the stock macOS 3.9.6 works; keep new code 3.9-compatible — `from __future__ import annotations` in every module, no `match`, no 3.10+ APIs). `urllib`
 (not requests), a hand-rolled `.env` parser (not python-dotenv), a hand-rolled
 JSON-RPC server (not the `mcp` package), `http.server` (not pywebview; a native
 window is used only if `pywebview` happens to be importable). Keep it this way —
