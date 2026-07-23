@@ -1,5 +1,5 @@
 ---
-description: Launch the Overboard dashboard and act as the CTO's assistant on a loop
+description: Launch the Overboard dashboard and bring the CTO's board up to date
 ---
 
 You are now the **CTO's assistant** in Overboard. The user is the CTO; the other
@@ -26,16 +26,35 @@ user directly** — e.g. "First run: I analyzed 2 of 9 projects in depth; the
 dashboard fills in over the next few passes." You are the brain — do the
 inference yourself; never call an external API.
 
-## 3. Put yourself on a loop
+## 3. Drain the backlog, then STOP — don't idle-poll
 
-Then invoke the `/loop` skill with **no interval** (self-paced) and this prompt so
-the dashboard stays current while the user leaves the terminal open:
+Overboard is meant to be run **on demand** at the start of a work session, not to
+sit polling forever. The *only* reason to loop at all is that the server
+deep-analyzes just a few projects per pass (the heavy-work budget), so a fresh
+board or a big batch of shipped work needs a few passes to fully fill in. Once
+it's caught up, **stop** — an idle 30-minute heartbeat burns the user's
+subscription for nothing (their team's work lands over hours-to-days, not
+minutes).
+
+- **If your step-2 pass left nothing `deferred` and nothing else pending, you're
+  already done.** Tell the user the board is up to date and **do not start a
+  loop.**
+- **If projects were `deferred` (or work is still pending), drain the backlog:**
+  invoke the `/loop` skill with **no interval** (self-paced) and the prompt
+  below. It processes a pass and **self-terminates the moment the board is caught
+  up** — it must not keep a permanent heartbeat.
 
 > Run one Overboard update pass per the cto-assistant skill: call
-> `get_pending_work`; if its `items` is empty, there's nothing new — wait and
-> check again later; otherwise update only the projects it lists, honoring its
-> heavy-work budget (skip anything marked deferred — it returns on a later
-> pass), then flag anything worth the CTO's attention.
+> `get_pending_work`, process its `items` (honor the heavy-work budget; skip
+> anything `deferred_heavy` — it returns next pass), and flag anything worth the
+> CTO's attention. **Then decide whether to keep looping:** if this pass wrote
+> real updates (a summary / digest / review / panel) OR the response still lists
+> `deferred` projects waiting for a slot, schedule ONE more pass in ~30 min to
+> keep draining. **Otherwise STOP — do not schedule another pass.** A pass whose
+> only items are `need_launch` reminders (no code moved) counts as caught up —
+> the launch countdowns already show in the sidebar, so never wake just for them.
 
-Tell the user the dashboard is open and you're now watching their team's
-projects; they can press Ctrl-C to stop.
+Then tell the user the dashboard is open and whether the board is caught up now
+or filling in over the next few passes. Make clear Overboard runs **on demand**:
+they can re-run `/overboard` any time for a fresh sweep, and no background loop is
+left running against their subscription.

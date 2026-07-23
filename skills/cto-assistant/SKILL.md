@@ -68,8 +68,15 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
    Do NOT flag "added feature X" / "did the task" — the CTO requested that work
    and already knows what was built. If nothing clears that bar, flag nothing.
 
-Then you're done until the next pass. Under `/loop`, only act when
-`get_pending_work` returns something — idle projects should cost nothing.
+Then you're done. Overboard runs **on demand**, not as a permanent heartbeat.
+Under `/loop`, keep looping **only while there's a backlog to drain** — projects
+still `deferred` (waiting for a heavy-work slot), or pending work left to write —
+and **stop the loop once the board is caught up**: a pass with nothing to do (or
+whose only items are `need_launch` reminders, since the countdowns already show
+in the sidebar) should END the loop, not schedule another. Idle polling burns the
+user's subscription for nothing, and their team's work lands over hours-to-days,
+not minutes — so a caught-up board means re-run `/overboard` next session, not
+keep waking.
 
 ## First run & the heavy-work budget
 

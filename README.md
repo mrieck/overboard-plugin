@@ -20,9 +20,11 @@ to sharpen its reports and flag slipping launches.
 
 **No Anthropic API key.** All the AI (summaries, digests, architecture) is done
 by the `/overboard` assistant itself — on your **Max/Pro subscription**, not the
-metered API. You run `/overboard`, Claude launches the dashboard, does the
-analysis, and puts *itself* on a loop; you leave the terminal open. The dashboard
-is a pure viewer.
+metered API. You run `/overboard`, Claude launches the dashboard and brings the
+board up to date — a couple of passes if there's a backlog to analyze, then it
+**stops**. It's an on-demand sweep, not a background loop that keeps polling; run
+`/overboard` again whenever you want a fresh update. The dashboard is a pure
+viewer.
 
 **No install, no dependencies.** Overboard runs on the Python 3 **standard
 library only** — no venv, no `pip install`, no API key. Anywhere `python3`
