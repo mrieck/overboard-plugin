@@ -17,6 +17,12 @@ just landed, what decisions it baked in, and what new surface now exists.
 
 ## Git usage (read-only, bounded)
 
+- **Always target the repo with `git -C <path> …`. Never `cd <path> && git …`.**
+  Claude Code refuses to offer "Always allow" for any `cd X && Y` command (it can
+  execute hooks from the target directory), so a `cd`-prefixed command prompts the
+  user *every single time* and can never be allowlisted. `git -C` is a plain
+  command that can. This matters: a single review pass runs dozens of git calls,
+  and the `cd` form turns that into dozens of manual approvals.
 - Read-only git only: `git log`, `git show`, `git diff`, `git rev-parse`,
   `git cat-file`, and a **read-only `git fetch`**. **Never pull, merge, checkout,
   reset, or otherwise mutate the working tree, index, or current branch** — a

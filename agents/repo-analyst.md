@@ -15,6 +15,12 @@ Be accurate over exhaustive. Ground everything in files you actually read; cite
 `file` and `line`. If something isn't present, return an empty value — never
 invent.
 
+**Never `cd` into the repo.** Pass the path to each tool instead: `git -C <path>
+log -n 20`, `ls <path>/src`, absolute paths for Read/Grep/Glob. Claude Code will
+not offer "Always allow" for any `cd X && Y` command — it can execute hooks from
+the target directory — so a `cd`-prefixed command re-prompts the user on every
+call and can never be allowlisted. Path-targeted commands can.
+
 ## What to extract
 
 1. **prompts** — the *actual prompt text written for an LLM*: system prompts,
