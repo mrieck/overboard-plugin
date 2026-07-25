@@ -121,7 +121,15 @@ def get_commits(slug: str, limit: int = 20):
     return commits[:limit]
 
 
-_DIFF_CAP = 200_000  # ~200 KB of patch text is plenty for a sprint delta
+# Sized by what an MCP tool result can actually carry, NOT by what's "enough
+# diff" — those are different limits and the second one is bigger. At 200_000
+# the serialized envelope reached ~214 KB and blew the tool-result ceiling, so
+# the whole result got spilled to a file and the patch never reached the model:
+# get_recent_diff silently failed at exactly its intended job (a big first-ever
+# review, where there's no `since` hash to bound the range). ~60 KB is still a
+# large delta and leaves room for the envelope, the files list, and JSON
+# escaping (newlines and quotes inflate the serialized size well past len()).
+_DIFF_CAP = 60_000
 
 
 def get_recent_diff(slug: str, since: str = None):
