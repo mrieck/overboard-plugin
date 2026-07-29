@@ -37,6 +37,14 @@ let CONTEXT_FOR = null; // project whose right-panel context is currently render
 const WORK_OPEN = {};
 const WORK_MMD = {};
 const WORK_ALL = new Set();
+// Dossier tabs inside an expanded work card: unit id -> active tab key.
+// Unit ids are server-assigned and unique, so no per-project scoping needed.
+const WORK_TAB = {};
+// Analysis accordions: slugs whose box is expanded (collapsed by default;
+// survives loadAnalyses' ANALYSES reset on Refresh, cleared on project switch).
+const AN_OPEN = new Set();
+// Direction pane: project whose "+ Add launch" form is currently revealed.
+let LAUNCH_FORM_OPEN = null;
 
 function boot() {
   if (window.mermaid) {
@@ -472,6 +480,8 @@ function activityGrid(counts, big) {
 function selectProject(name) {
   SELECTED = name;
   ANALYSES = {};
+  AN_OPEN.clear();
+  LAUNCH_FORM_OPEN = null;
   const detail = document.getElementById("detail");
   detail.innerHTML =
     '<div class="detail-inner"><div id="detail-report"></div><div id="detail-analysis"></div></div>';
@@ -548,15 +558,10 @@ function renderReport(proj) {
 
   host.appendChild(top);
 
-  // Assistant report: narrative + review flags.
+  // Assistant report: flags lead (they're the actionable part), narrative
+  // drops below them as a muted one-liner.
   if (proj.pm_narrative || (proj.review && proj.review.length)) {
     host.appendChild(sectionTitle("Assistant report"));
-    if (proj.pm_narrative) {
-      const n = document.createElement("p");
-      n.className = "rep-narr";
-      n.textContent = proj.pm_narrative;
-      host.appendChild(n);
-    }
     if (proj.review && proj.review.length) {
       const rh = document.createElement("div");
       rh.className = "rep-review-head";
@@ -584,6 +589,12 @@ function renderReport(proj) {
       }
       host.appendChild(ul);
     }
+    if (proj.pm_narrative) {
+      const n = document.createElement("p");
+      n.className = "rep-narr";
+      n.textContent = proj.pm_narrative;
+      host.appendChild(n);
+    }
   }
 
   // Recent work — the assistant's per-sprint delta cards, newest first.
@@ -610,6 +621,19 @@ function renderReport(proj) {
 }
 
 // ---- recent-work cards (assistant-owned delta layer) -----------------------
+// Dossier tabs: bullets are the substance, so an expanded card lands on
+// Decisions; the prose summary is demoted to the last tab. Only tabs with
+// content render. Flow is the fallback of last resort (async render is a bad
+// landing tab).
+const WORK_TAB_DEFS = [
+  ["decisions", "Decisions", (u) => (u.decisions || []).length],
+  ["surface", "Now exists", (u) => (u.surface || []).length],
+  ["code", "Code", (u) => (u.snippets || []).length],
+  ["flow", "Flow", (u) => (u.mermaid ? 1 : 0)],
+  ["summary", "Summary", (u) => (u.summary ? 1 : 0)],
+];
+const WORK_TAB_FALLBACK = ["decisions", "surface", "code", "summary", "flow"];
+
 function workCard(proj, u) {
   const open = WORK_OPEN[proj.name];
   const card = el("div", "work-card");
@@ -645,10 +669,37 @@ function workCard(proj, u) {
   if (!open.has(u.id)) return card;
 
   const body = el("div", "work-body");
-  if (u.summary) body.appendChild(el("p", "work-summary", u.summary));
+  const counts = {};
+  for (const [key, , countOf] of WORK_TAB_DEFS) counts[key] = countOf(u);
+  // Stale WORK_TAB entries (data changed under us) re-fall-back, never an empty pane.
+  let tab = WORK_TAB[u.id];
+  if (!tab || !counts[tab]) tab = WORK_TAB_FALLBACK.find((k) => counts[k]) || null;
+  if (!tab) {
+    body.appendChild(el("p", "subtle", "No details recorded."));
+    card.appendChild(body);
+    return card;
+  }
 
-  if ((u.decisions || []).length) {
-    body.appendChild(sectionTitle("Decisions & assumptions"));
+  const nav = el("nav", "tabs work-tabs");
+  for (const [key, label] of WORK_TAB_DEFS) {
+    if (!counts[key]) continue;
+    const b = document.createElement("button");
+    b.appendChild(document.createTextNode(label));
+    if (key === "decisions" || key === "surface" || key === "code") {
+      b.appendChild(el("span", "tab-n", String(counts[key])));
+    }
+    b.className = tab === key ? "on" : "";
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      WORK_TAB[u.id] = key;
+      render();
+    });
+    nav.appendChild(b);
+  }
+  body.appendChild(nav);
+
+  const pane = el("div", "work-tab-body");
+  if (tab === "decisions") {
     const ul = el("ul", "work-decisions");
     for (const d of u.decisions) {
       const li = document.createElement("li");
@@ -656,11 +707,8 @@ function workCard(proj, u) {
       if (d.file) li.appendChild(el("span", "loc", d.line ? `${d.file}:${d.line}` : d.file));
       ul.appendChild(li);
     }
-    body.appendChild(ul);
-  }
-
-  if ((u.surface || []).length) {
-    body.appendChild(sectionTitle("Now exists"));
+    pane.appendChild(ul);
+  } else if (tab === "surface") {
     const byKind = {};
     for (const s of u.surface) {
       const k = s.kind || "other";
@@ -676,19 +724,19 @@ function workCard(proj, u) {
         kv.appendChild(p);
       }
       row.appendChild(kv);
-      body.appendChild(row);
+      pane.appendChild(row);
     }
+  } else if (tab === "code") {
+    for (const s of u.snippets) pane.appendChild(snippetEl(s));
+  } else if (tab === "flow") {
+    // Lazy: only rendered while this tab is active; WORK_MMD caches the SVG
+    // so later ticks re-attach instantly without flicker.
+    renderWorkMermaid(pane, u.id, u.mermaid);
+  } else if (tab === "summary") {
+    pane.appendChild(el("p", "work-summary", u.summary));
   }
+  body.appendChild(pane);
 
-  if ((u.snippets || []).length) {
-    body.appendChild(sectionTitle("Key new code"));
-    for (const s of u.snippets) body.appendChild(snippetEl(s));
-  }
-
-  if (u.mermaid) {
-    body.appendChild(sectionTitle("Flow"));
-    renderWorkMermaid(body, u.id, u.mermaid);
-  }
   card.appendChild(body);
   return card;
 }
@@ -1419,15 +1467,25 @@ function renderAnalyses() {
 
 function analysisBlock(slug) {
   const a = ANALYSES[slug];
+  const isOpen = AN_OPEN.has(slug);
   const box = document.createElement("div");
-  box.className = "analysis";
+  box.className = "analysis" + (isOpen ? "" : " closed");
 
   const head = document.createElement("div");
   head.className = "an-head";
+  head.addEventListener("click", () => {
+    if (AN_OPEN.has(slug)) AN_OPEN.delete(slug);
+    else AN_OPEN.add(slug);
+    renderAnalyses();
+  });
+  head.appendChild(el("span", "work-caret", isOpen ? "▾" : "▸"));
   const h = document.createElement("h3");
   h.textContent = slug;
   head.appendChild(h);
   box.appendChild(head);
+
+  // Collapsed by default: just the header row, even while loading.
+  if (!isOpen) return box;
 
   if (a.loading) {
     const s = document.createElement("div");
@@ -1713,7 +1771,16 @@ function buildContext(host, project, ctx) {
   host.textContent = "";
   host.appendChild(el("h3", "ctx-title", "Launch / milestone"));
   if (ctx.active_launch) host.appendChild(launchCard(project, ctx));
-  else host.appendChild(launchForm(project, null));
+  else if (LAUNCH_FORM_OPEN === project) host.appendChild(launchForm(project, null));
+  else {
+    // No launch planned: a single quiet button instead of a five-field empty form.
+    const add = el("button", "btn ghost small add-launch", "+ Add launch");
+    add.addEventListener("click", () => {
+      LAUNCH_FORM_OPEN = project;
+      buildContext(host, project, ctx); // reuse the ctx we already fetched
+    });
+    host.appendChild(add);
+  }
   if ((ctx.past_launches || []).length) host.appendChild(historyBlock(ctx.past_launches));
   host.appendChild(el("h3", "ctx-title", "Status"));
   host.appendChild(statusBlock(project, ctx.status || ""));
@@ -1813,11 +1880,12 @@ function launchForm(project, existing) {
   const status = el("span", "subtle ctx-status", "");
   const save = el("button", "btn small", existing ? "Save changes" : "Add launch");
   actions.appendChild(status);
-  if (existing) {
-    const cancel = el("button", "btn ghost small", "Cancel");
-    cancel.addEventListener("click", () => renderContext(currentProject()));
-    actions.appendChild(cancel);
-  }
+  const cancel = el("button", "btn ghost small", "Cancel");
+  cancel.addEventListener("click", () => {
+    LAUNCH_FORM_OPEN = null;
+    renderContext(currentProject());
+  });
+  actions.appendChild(cancel);
   actions.appendChild(save);
 
   save.addEventListener("click", async () => {
@@ -1827,6 +1895,7 @@ function launchForm(project, existing) {
       action: actionF.get(), target_date: dateIn.value, goals: goalsIn.value.trim(),
     };
     const ctx = await call(existing ? "update_active_launch" : "set_active_launch", payload);
+    LAUNCH_FORM_OPEN = null; // a successful save lands on the launch card
     if (CONTEXT_FOR === project) buildContext(document.getElementById("context-body"), project, ctx || {});
   });
 

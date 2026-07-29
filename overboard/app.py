@@ -79,11 +79,15 @@ def _review_key(project: str, text: str) -> str:
 
 def _prefix_group(slugs: list[str]) -> dict[str, list[str]]:
     """Fallback grouping when AI is unavailable: cluster by the name stem
-    before the first '-'."""
-    groups: dict[str, list[str]] = {}
+    before the first '-'. A repo with no stem-mates keeps its FULL slug as the
+    group name — a lone `demo-video-maker` must not appear as a mysterious
+    "demo" (a truncated name reads as an unknown project until the assistant
+    groups it properly)."""
+    by_stem: dict[str, list[str]] = {}
     for s in slugs:
-        groups.setdefault(s.split("-", 1)[0], []).append(s)
-    return groups
+        by_stem.setdefault(s.split("-", 1)[0], []).append(s)
+    return {(members[0] if len(members) == 1 else stem): members
+            for stem, members in by_stem.items()}
 
 
 def _gather_active_repos(sources, sessions, cutoff) -> tuple[dict, list[str]]:

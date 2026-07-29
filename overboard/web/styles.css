@@ -10,6 +10,20 @@
   --amber: #e0a54a;
   --red: #e06a5a;
   --chip: #2a2f39;
+  /* type scale + reading measure */
+  --fs-lede: 14.5px;
+  --fs-label: 11px;
+  --measure: 72ch;
+  /* pane zoning: sidebar darkest (recedes), detail = lighter reading surface
+     (the "paper"), context between — surface contrast separates the columns,
+     not border lines. */
+  --bg-sidebar: #121417;
+  --bg-detail: #1e222a;
+  --panel-detail: #262b34;
+  --border-detail: #343a46;
+  --hover-detail: #2b313c;
+  --bg-context: #191c22;
+  --panel-context: #20242c;
   /* GitHub-style contribution scale (dark) */
   --lvl-0: #20242c;
   --lvl-1: #0e4429;
@@ -35,7 +49,7 @@ html, body {
   width: 340px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--bg-sidebar);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -131,7 +145,7 @@ html, body {
 .cell.lvl-4 { background: var(--lvl-4); }
 
 /* ---- right detail panel --------------------------------------------------- */
-.detail { flex: 1; overflow-y: auto; }
+.detail { flex: 1; overflow-y: auto; background: var(--bg-detail); }
 .detail-empty { color: var(--muted); text-align: center; padding: 80px 20px; }
 .detail-inner { padding: 18px 22px; max-width: 900px; }
 
@@ -161,8 +175,10 @@ html, body {
   text-transform: uppercase; letter-spacing: 0.05em;
   margin: 18px 0 6px;
 }
-.rep-summary { color: var(--text); margin: 4px 0; line-height: 1.6; }
-.rep-narr { color: var(--text); margin: 4px 0 6px; line-height: 1.55; }
+.rep-summary { color: var(--text); margin: 4px 0; line-height: 1.6; font-size: var(--fs-lede); }
+.rep-narr { color: var(--muted); margin: 6px 0 4px; line-height: 1.55; font-size: 12.5px; }
+/* prose never runs the full 900px — cap at a comfortable reading measure */
+.rep-summary, .rep-narr, .work-summary, .work-decisions, .rep-review { max-width: var(--measure); }
 .rep-review-head { color: var(--amber); font-weight: 600; font-size: 12px; margin: 6px 0 2px; }
 .rep-review { margin: 2px 0 4px; padding-left: 18px; }
 .rep-review li {
@@ -299,7 +315,7 @@ html, body {
 #context {
   width: 340px; flex-shrink: 0;
   border-left: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--bg-context);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .context-head {
@@ -336,13 +352,14 @@ body.context-collapsed #context .context-head { justify-content: center; padding
 
 .launch-card, .launch-form {
   border: 1px solid var(--border); border-radius: 10px;
-  padding: 12px; background: var(--panel-2);
+  padding: 12px; background: var(--panel-context);
 }
 .launch-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .launch-type {
-  font-weight: 700; font-size: 11px; text-transform: uppercase;
-  letter-spacing: 0.04em; color: var(--accent);
+  font-weight: 700; font-size: var(--fs-label); text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted);
 }
+.add-launch { width: 100%; padding: 8px; }
 .launch-title { font-size: 15px; font-weight: 600; margin: 6px 0 2px; }
 .launch-action { font-size: 12px; }
 .launch-date { font-size: 12px; margin-top: 2px; }
@@ -436,14 +453,14 @@ body.context-collapsed #context .context-head { justify-content: center; padding
 
 /* ---- recent-work cards (assistant delta layer) ----------------------------- */
 .work-card {
-  border: 1px solid var(--border); border-radius: 10px;
-  background: var(--panel); margin-top: 10px; overflow: hidden;
+  border: 1px solid var(--border-detail); border-radius: 10px;
+  background: var(--panel-detail); margin-top: 10px; overflow: hidden;
 }
 .work-head {
   display: flex; align-items: center; gap: 8px;
   padding: 9px 12px; cursor: pointer;
 }
-.work-head:hover { background: var(--panel-2); }
+.work-head:hover { background: var(--hover-detail); }
 .work-caret { color: var(--muted); font-size: 11px; flex-shrink: 0; }
 .work-title { font-weight: 600; font-size: 13px; white-space: nowrap; }
 .work-meta {
@@ -457,27 +474,35 @@ body.context-collapsed #context .context-head { justify-content: center; padding
 }
 .work-hide:hover { color: var(--red); }
 .work-hide:disabled { opacity: 0.5; cursor: default; }
-.work-body { padding: 2px 14px 12px; border-top: 1px solid var(--border); }
+.work-body { padding: 0 14px 12px; border-top: 1px solid var(--border-detail); }
 .work-summary { margin: 10px 0 4px; line-height: 1.55; }
-.work-decisions { margin: 2px 0 4px; padding-left: 18px; }
-.work-decisions li { font-size: 12.5px; margin: 3px 0; }
+.work-decisions { margin: 8px 0 4px; padding-left: 18px; }
+.work-decisions li { font-size: 12.5px; margin: 4px 0; }
 .work-decisions .loc { color: var(--muted); font-size: 11px; margin-left: 8px; }
-.work-surface { margin: 4px 0; }
+.work-surface { margin: 8px 0 4px; }
 .work-kind {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--accent); font-weight: 700;
+  font-size: var(--fs-label); text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); font-weight: 700;
 }
+/* dossier tab bar inside an expanded work card */
+.work-tabs { padding: 8px 0 6px; border-bottom: 1px solid var(--border-detail); }
+.tab-n { color: var(--muted); font-size: var(--fs-label); margin-left: 5px; }
+.tabs button.on .tab-n { color: inherit; }
+.work-tab-body { padding-top: 2px; }
 
 /* ---- repo analysis (in-panel) --------------------------------------------- */
 #detail-analysis { margin-top: 8px; }
 .analysis {
-  border: 1px solid var(--border); border-radius: 10px;
-  background: var(--panel); margin-top: 16px; overflow: hidden;
+  border: 1px solid var(--border-detail); border-radius: 10px;
+  background: var(--panel-detail); margin-top: 16px; overflow: hidden;
 }
 .an-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border-detail);
+  cursor: pointer;
 }
+.an-head:hover { background: var(--hover-detail); }
+.analysis.closed .an-head { border-bottom: none; }
 .an-head h3 { margin: 0; font-size: 14px; }
 .tabs { display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .tabs button {
@@ -486,6 +511,9 @@ body.context-collapsed #context .context-head { justify-content: center; padding
 }
 .tabs button.on { background: var(--panel-2); color: var(--text); }
 .tab-body { padding: 14px; }
+/* sub-heads inside a tab pane sit a level below the page's section titles */
+.tab-body .section-title { font-size: var(--fs-label); margin: 14px 0 4px; }
+.tab-body .section-title:first-child { margin-top: 0; }
 
 .arch { line-height: 1.6; }
 .subtle { color: var(--muted); }
@@ -501,7 +529,7 @@ body.context-collapsed #context .context-head { justify-content: center; padding
 .finding .meta { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
 .finding .kind {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--accent); font-weight: 700;
+  color: var(--muted); font-weight: 700;
 }
 .finding .loc { color: var(--muted); font-size: 11px; }
 .finding code {
