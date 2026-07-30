@@ -8,7 +8,7 @@ visualizations (Mermaid), your projects' real LLM prompts, **Recent work** cards
 distilled from the actual diffs, and — live — the key "needs review" tidbits
 from your working Claudes.
 
-<!-- TODO: screenshot here — docs/overboard_screenshot.png -->
+![The Overboard dashboard — project list with activity grids on the left, the selected project's report and Recent work cards in the center, launch/vision context on the right](docs/overboard_screenshot.png)
 
 The dashboard is a **three-pane** layout: a condensed left sidebar lists every
 project with a calendar-style activity grid (each row a week, Mon→Sun, newest
@@ -111,7 +111,14 @@ Requires `python3` 3.9+ on your PATH (stock macOS and any recent Linux qualify).
 
 ## Install the plugin in Claude Code
 
-Clone this repo anywhere, then:
+From the [Productive Mark marketplace](https://github.com/mrieck/claude-plugins):
+
+```
+/plugin marketplace add mrieck/claude-plugins
+/plugin install overboard@productive-mark
+```
+
+Or from a local clone of this repo (it bundles its own marketplace):
 
 ```
 /plugin marketplace add /path/to/overboard-plugin
