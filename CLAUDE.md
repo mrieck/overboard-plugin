@@ -86,11 +86,12 @@ concurrently (the `state.json.tmp` error).
 ## The dashboard UI (two-pane)
 
 - **Left sidebar** (`overboard/web/`): condensed project list. Each row = project
-  name + a GitHub-style **30-day activity grid** (6×5 cells, `lvl-0..lvl-4`
+  name + a calendar-style **activity grid** (rows = weeks Mon→Sun, newest week
+  on top; the current week + 4 full weeks ≈ last 5 weeks, `lvl-0..lvl-4`
   intensity) + a compact active/idle chip + a `⚑ N` review flag when the
   assistant has flagged items. Clicking a row selects the project.
 - **Right panel**: the selected project's full detail. Top row = **summary on the
-  left, 30-day commit grid on the right**. Below: the assistant's report
+  left, 5-week commit grid on the right**. Below: the assistant's report
   (narrative + review flags), **Recent work** cards (the assistant's per-sprint
   delta layer — newest-first, expandable, hide with ✕; `need_review` in
   `get_pending_work` drives them, the `work-reviewer` subagent extracts from real

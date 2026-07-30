@@ -124,18 +124,30 @@ html, body {
 .prow-status.st-shipped { background: #16321f; color: var(--green); }
 .prow-status.st-on-hold { background: #3a2c16; color: var(--amber); }
 
-/* ---- 30-day activity grid ------------------------------------------------- */
+/* ---- activity grid (calendar layout: rows = weeks Mon→Sun, newest on top) - */
 .grid {
   display: grid;
-  grid-template-columns: repeat(6, 9px);
+  grid-template-columns: repeat(7, 9px);
   grid-auto-rows: 9px;
   gap: 2px;
   flex-shrink: 0;
 }
 .grid.grid-lg {
-  grid-template-columns: repeat(6, 15px);
+  grid-template-columns: repeat(7, 15px);
   grid-auto-rows: 15px;
   gap: 3px;
+}
+.cell.future { visibility: hidden; }
+/* Large grid + its M T W T F S S header row. */
+.grid-wrap { display: flex; flex-direction: column; gap: 3px; flex-shrink: 0; }
+.grid-days {
+  display: grid;
+  grid-template-columns: repeat(7, 15px);
+  gap: 3px;
+  font-size: 9px;
+  line-height: 10px;
+  color: var(--muted);
+  text-align: center;
 }
 .cell { border-radius: 2px; background: var(--lvl-0); }
 .cell.lvl-0 { background: var(--lvl-0); }

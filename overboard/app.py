@@ -265,6 +265,10 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
 
     window_days = config["commit_window_days"]
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+    # The activity grid is window-independent: 5 calendar week rows (Mon-Sun,
+    # newest on top), which reach back at most 34 days. Daily counts always
+    # cover that span, even when commit_window_days is shorter.
+    grid_cutoff = datetime.now(timezone.utc) - timedelta(days=35)
     start_hour = config.get("day_start_hour", 5)
     today_key = _logical_day_key(datetime.now(timezone.utc), start_hour)
 
@@ -309,7 +313,7 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
         old_repos = old_state.get("projects", {}).get(name, {}).get("repos", {})
 
         repos_state: dict = {}
-        window_commits: dict[str, list[dict]] = {}
+        daily_counts: dict[str, int] = {}
         commits_today = 0
         latest: datetime | None = None
 
@@ -347,26 +351,16 @@ def perform_refresh(config: dict, sources: list[dict], old_state: dict) -> dict:
             if head_dt and (latest is None or head_dt > latest):
                 latest = head_dt
 
-            recent = []
             for c in commits:
                 d = _parse_date(c["date"])
-                if d is None or d < cutoff:
-                    continue
-                recent.append(c)
-                if _logical_day_key(d, start_hour) == today_key:
-                    commits_today += 1
-            window_commits[slug] = recent
-
-        days_idle = (datetime.now(timezone.utc) - latest).days if latest else None
-
-        daily_counts: dict[str, int] = {}
-        for commits in window_commits.values():
-            for c in commits:
-                d = _parse_date(c["date"])
-                if d is None:
+                if d is None or d < grid_cutoff:
                     continue
                 key = _logical_day_key(d, start_hour)
                 daily_counts[key] = daily_counts.get(key, 0) + 1
+                if key == today_key:
+                    commits_today += 1
+
+        days_idle = (datetime.now(timezone.utc) - latest).days if latest else None
 
         head_sig = "|".join(f"{s}:{r.get('head')}" for s, r in sorted(repos_state.items()))
         new_state["projects"][name] = {

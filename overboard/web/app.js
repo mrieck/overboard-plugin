@@ -288,6 +288,12 @@ function render() {
   const detail = document.getElementById("detail");
   const proj = currentProject();
   if (!proj) {
+    // Nothing selected (first load, or the selection dropped off the board) —
+    // fall back to the first project so the right panel is never empty.
+    if (VIEW.projects && VIEW.projects.length) {
+      selectProject(VIEW.projects[0].name);
+      return;
+    }
     // Selection is gone (or nothing selected yet) — reset the right panel.
     SELECTED = null;
     ANALYSES = {};
@@ -377,7 +383,7 @@ function projectRow(proj) {
   else if (proj.launch) main.appendChild(launchLine(proj.launch));
 
   row.appendChild(main);
-  row.appendChild(activityGrid(proj.daily_counts)); // 30-day GitHub-style grid
+  row.appendChild(activityGrid(proj.daily_counts)); // calendar-style week-row grid
   return row;
 }
 
@@ -430,7 +436,7 @@ function launchLine(l) {
   return wrap;
 }
 
-// ---- 30-day activity grid (GitHub-style, replaces the commit bars) ---------
+// ---- activity grid (GitHub-exact week columns, replaces the commit bars) ----
 function dayKey(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -438,20 +444,34 @@ function dayKey(d) {
   return `${y}-${m}-${da}`;
 }
 
-// Most recent `days` logical days, oldest first, with counts. A "day" begins at
+// Calendar layout, in display (row-major) order: each row is a week running
+// Monday → Sunday, the TOP row is the current week, older weeks below — 5 rows,
+// 35 cells. Days of the current week that haven't happened yet come back with
+// future:true so the grid can hold their place invisibly. A "day" begins at
 // day_start_hour local (default 5am), so we anchor at now-minus-that-many-hours
 // before enumerating — matching the backend's bucket keys exactly.
-function dailySeries(counts, days) {
+function dailySeries(counts) {
   const out = [];
   const startHour = (VIEW && VIEW.day_start_hour != null) ? VIEW.day_start_hour : 5;
   const anchor = new Date(Date.now() - startHour * 3600 * 1000);
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(anchor);
-    d.setDate(anchor.getDate() - i);
-    const key = dayKey(d);
-    out.push({ key, count: counts[key] || 0 });
+  const dow = (anchor.getDay() + 6) % 7; // 0=Mon .. 6=Sun
+  for (let week = 0; week < 5; week++) {
+    for (let wd = 0; wd < 7; wd++) {
+      const offset = week * 7 + dow - wd; // days back from today (negative = future)
+      const d = new Date(anchor);
+      d.setDate(anchor.getDate() - offset);
+      const key = dayKey(d);
+      out.push({ key, count: counts[key] || 0, future: offset < 0 });
+    }
   }
   return out;
+}
+
+// Weekday for a "YYYY-MM-DD" key, built from parts so the local timezone
+// can't shift it to the neighboring day (new Date("YYYY-MM-DD") parses as UTC).
+function weekdayName(key) {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "long" });
 }
 
 function level(v) {
@@ -462,17 +482,33 @@ function level(v) {
   return 4;
 }
 
-// A fixed 30-cell grid (6 columns × 5 rows), oldest → newest. `big` for the
-// larger version in the detail panel header.
+// Calendar-style grid: each ROW is a week (Mon → Sun), the top row is the
+// current week, older weeks below. Future days of the current week are
+// invisible placeholders so the row keeps its shape. `big` (the detail-panel
+// version) adds a dim M T W T F S S header row.
 function activityGrid(counts, big) {
-  const wrap = document.createElement("div");
-  wrap.className = "grid" + (big ? " grid-lg" : "");
-  for (const day of dailySeries(counts || {}, 30)) {
+  const grid = document.createElement("div");
+  grid.className = "grid" + (big ? " grid-lg" : "");
+  for (const day of dailySeries(counts || {})) {
     const cell = document.createElement("span");
-    cell.className = "cell lvl-" + level(day.count);
-    cell.title = `${day.key}: ${day.count} commit${day.count === 1 ? "" : "s"}`;
-    wrap.appendChild(cell);
+    if (day.future) {
+      cell.className = "cell future";
+    } else {
+      cell.className = "cell lvl-" + level(day.count);
+      cell.title = `${weekdayName(day.key)} ${day.key}: ${day.count} commit${day.count === 1 ? "" : "s"}`;
+    }
+    grid.appendChild(cell);
   }
+  if (!big) return grid;
+  const wrap = document.createElement("div");
+  wrap.className = "grid-wrap";
+  const days = document.createElement("div");
+  days.className = "grid-days";
+  for (const label of ["M", "T", "W", "T", "F", "S", "S"]) {
+    days.appendChild(el("span", "", label));
+  }
+  wrap.appendChild(days);
+  wrap.appendChild(grid);
   return wrap;
 }
 
@@ -508,7 +544,7 @@ function renderReport(proj) {
   if (host.querySelector(".rename-input")) return; // don't wipe an in-progress rename on ticks
   host.textContent = "";
 
-  // Top row: summary on the left, 30-day commit grid on the right.
+  // Top row: summary on the left, 5-week commit grid on the right.
   const top = document.createElement("div");
   top.className = "rep-top";
 
@@ -546,13 +582,13 @@ function renderReport(proj) {
   main.appendChild(sum);
   top.appendChild(main);
 
-  const total = Object.values(proj.daily_counts || {}).reduce((a, b) => a + b, 0);
+  const total = dailySeries(proj.daily_counts || {}).reduce((a, d) => a + d.count, 0);
   const gcol = document.createElement("div");
   gcol.className = "rep-top-grid";
   gcol.appendChild(activityGrid(proj.daily_counts, true));
   const gl = document.createElement("span");
   gl.className = "subtle";
-  gl.textContent = `${total} commit${total === 1 ? "" : "s"} · ${Math.min(30, (VIEW && VIEW.window_days) || 30)} days`;
+  gl.textContent = `${total} commit${total === 1 ? "" : "s"} · last 5 weeks`;
   gcol.appendChild(gl);
   top.appendChild(gcol);
 
@@ -882,7 +918,7 @@ function renderSettingsModal(s) {
       '<fieldset class="src">' +
         '<legend>Tracking</legend>' +
         '<label>Commit window (days) <input type="number" id="win-days" min="7" max="365"></label>' +
-        '<p class="subtle hint">Repos with no commits in this window drop off the board. The activity grid always shows the last 30 days.</p>' +
+        '<p class="subtle hint">Repos with no commits in this window drop off the board. The activity grid always shows the last 5 weeks.</p>' +
         '<label><input type="checkbox" id="hide-idle"> Hide local repos idle past the window</label>' +
         '<p class="subtle hint">Local clones with no commits in the window disappear (they return on new commits). To remove a repo for good, use its <b>hide ✕</b> — it lands in Excluded repos below.</p>' +
       '</fieldset>' +
