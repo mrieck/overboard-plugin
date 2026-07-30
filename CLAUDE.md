@@ -83,7 +83,7 @@ concurrently (the `state.json.tmp` error).
 
 `Api._build_view` overlays `ai.json` onto `state.json` at read time.
 
-## The dashboard UI (two-pane)
+## The dashboard UI (three-pane: sidebar, detail, context)
 
 - **Left sidebar** (`overboard/web/`): condensed project list. Each row = project
   name + a calendar-style **activity grid** (rows = weeks Mon→Sun, newest week
