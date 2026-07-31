@@ -225,6 +225,11 @@ async function loadView() {
 
 // ---- top-level controls ----------------------------------------------------
 function wireControls() {
+  // Editing the #hash (or navigating to a pasted deep-link) selects live too.
+  window.addEventListener("hashchange", () => {
+    const name = projectFromHash();
+    if (name && name !== SELECTED) selectProject(name);
+  });
   document.getElementById("refresh").addEventListener("click", refresh);
   document.getElementById("rescan").addEventListener("click", rescan);
   document.getElementById("settings").addEventListener("click", openSettings);
@@ -281,6 +286,18 @@ function currentProject() {
   return (VIEW && VIEW.projects.find((p) => p.name === SELECTED)) || null;
 }
 
+// Deep-links: #ProjectName in the URL selects that project. Matched against
+// both the canonical name and the display name, case-insensitively.
+function projectFromHash() {
+  const raw = decodeURIComponent(location.hash.slice(1)).trim();
+  if (!raw || !VIEW || !VIEW.projects) return null;
+  const want = raw.toLowerCase();
+  const hit = VIEW.projects.find(
+    (p) => p.name.toLowerCase() === want || (p.display || "").toLowerCase() === want
+  );
+  return hit ? hit.name : null;
+}
+
 function render() {
   renderStatus();
   renderSidebar();
@@ -289,9 +306,10 @@ function render() {
   const proj = currentProject();
   if (!proj) {
     // Nothing selected (first load, or the selection dropped off the board) —
-    // fall back to the first project so the right panel is never empty.
+    // honor a #ProjectName deep-link first, else fall back to the first
+    // project so the right panel is never empty.
     if (VIEW.projects && VIEW.projects.length) {
-      selectProject(VIEW.projects[0].name);
+      selectProject(projectFromHash() || VIEW.projects[0].name);
       return;
     }
     // Selection is gone (or nothing selected yet) — reset the right panel.
@@ -515,6 +533,8 @@ function activityGrid(counts, big) {
 // ---- right panel: project report -------------------------------------------
 function selectProject(name) {
   SELECTED = name;
+  // Keep the URL shareable (replaceState: no history spam, no hashchange loop).
+  history.replaceState(null, "", "#" + encodeURIComponent(name));
   ANALYSES = {};
   AN_OPEN.clear();
   LAUNCH_FORM_OPEN = null;
