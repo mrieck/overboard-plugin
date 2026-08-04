@@ -189,8 +189,9 @@ html, body {
 }
 .rep-summary { color: var(--text); margin: 4px 0; line-height: 1.6; font-size: var(--fs-lede); }
 .rep-narr { color: var(--muted); margin: 6px 0 4px; line-height: 1.55; font-size: 12.5px; }
-/* prose never runs the full 900px — cap at a comfortable reading measure */
-.rep-summary, .rep-narr, .work-summary, .work-decisions, .rep-review { max-width: var(--measure); }
+/* prose never runs the full 900px — cap at a comfortable reading measure
+   (the review-flag list is action rows, not prose — it gets the full width) */
+.rep-summary, .rep-narr, .work-summary, .work-decisions { max-width: var(--measure); }
 .rep-review-head { color: var(--amber); font-weight: 600; font-size: 12px; margin: 6px 0 2px; }
 .rep-review { margin: 2px 0 4px; padding-left: 18px; }
 .rep-review li {
