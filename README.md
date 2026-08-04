@@ -60,6 +60,40 @@ and analyzed automatically. The good stuff (summaries, Recent work cards, real
 prompts, architecture write-ups) fills in once `/overboard` has run.
 **Refresh** re-pulls commits; **Rescan** re-discovers local clones.
 
+## Scheduler (⏱)
+
+The dashboard's **⏱ Scheduler** panel runs recurring, unattended Claude Code
+sessions — "nightly triage at 2am", "every 2h between 9–18" — without the Mac
+app. Each *slot* has a working directory, a prompt, and a simple schedule
+(daily / weekly / every N hours; deliberately simpler than cron). Runs launch
+inside [Herdr](https://herdr.dev) (macOS and Linux) as
+`claude --permission-mode auto` in an "Overboard" workspace, so you can watch
+or take over any run in Herdr's own UI. When a run's Stop hook fires, the
+scheduler captures the closing message and transcript, then closes the pane.
+State lives in `~/.cache/overboard/scheduler/`.
+
+Slots fire only while the dashboard server is running. On an always-on Linux
+box, run it as a systemd user service:
+
+```ini
+# ~/.config/systemd/user/overboard.service
+[Unit]
+Description=Overboard dashboard + scheduler
+
+[Service]
+ExecStart=/usr/bin/python3 -m overboard.app --serve --no-open
+WorkingDirectory=%h/.claude/plugins/overboard   # wherever the plugin checkout lives
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user enable --now overboard
+loginctl enable-linger $USER   # keep it running when you're logged out
+```
+
 ## Configuration
 
 Out of the box, **Local-only mode** needs no credentials at all — it reads

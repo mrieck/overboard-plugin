@@ -21,7 +21,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from overboard import analysis, debuglog, diagram, events, localgit, localrepo, manager, providers, store
+from overboard import analysis, debuglog, diagram, events, localgit, localrepo, manager, providers, schedule, scheduler, store
 
 APP_TITLE = "Overboard"
 ICON_NORMAL = "applications-development"
@@ -554,6 +554,10 @@ class Api:
         self._analysis_lock = threading.Lock()
         self._sync_lock = threading.Lock()
         self._window = None
+        # Constructed here, but its tick thread starts in run_dashboard AFTER
+        # the HTTP bind succeeds — the bind is the single-instance lock, and the
+        # "port taken" path also builds an Api, which must never double-fire.
+        self.scheduler = scheduler.Scheduler()
         # First run on this machine: discover local clones so badges work
         # immediately, before any manual rescan.
         if not localrepo.links_for_machine(self.state):
@@ -1128,6 +1132,40 @@ class Api:
             return False
         return _open_terminal(path)
 
+    # ---- scheduler (slots that fire unattended claude runs via herdr) -----
+    def scheduler_view(self) -> dict:
+        view = self.scheduler.view()
+        view["known_paths"] = sorted(set(localrepo.links_for_machine(self.state).values()))
+        return view
+
+    def save_slot(self, slot: dict) -> dict:
+        return self.scheduler.save_slot(slot)
+
+    def delete_slot(self, slot_id: str) -> dict:
+        return self.scheduler.delete_slot(slot_id)
+
+    def toggle_slot(self, slot_id: str, enabled: bool) -> dict:
+        return self.scheduler.toggle_slot(slot_id, enabled)
+
+    def run_slot_now(self, slot_id: str) -> dict:
+        return self.scheduler.run_now(slot_id)
+
+    def stop_run(self, run_id: str) -> dict:
+        return self.scheduler.stop_run(run_id)
+
+    def get_run_transcript(self, run_id: str) -> dict:
+        return self.scheduler.transcript(run_id)
+
+    def preview_schedule(self, spec: dict) -> dict:
+        """Live validation for the slot form: summary + next fire, or the error."""
+        try:
+            clean = schedule.validate(spec)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        nf = schedule.next_fire(clean, datetime.now())
+        return {"ok": True, "summary": schedule.summary(clean),
+                "next_fire": nf.isoformat(timespec="seconds") if nf else None}
+
 
 def _make_handler(api: "Api"):
     from http.server import BaseHTTPRequestHandler
@@ -1139,7 +1177,9 @@ def _make_handler(api: "Api"):
                "get_settings", "save_settings", "detect_roots",
                "get_context", "set_active_launch", "update_active_launch",
                "pushback_launch", "complete_launch", "save_vision",
-               "set_project_status", "rename_project"}
+               "set_project_status", "rename_project",
+               "scheduler_view", "save_slot", "delete_slot", "toggle_slot",
+               "run_slot_now", "stop_run", "get_run_transcript", "preview_schedule"}
     CONTENT_TYPES = {
         ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
         ".json": "application/json", ".svg": "image/svg+xml",
@@ -1271,6 +1311,10 @@ def run_dashboard(config: dict, port: int, prefer_window: bool,
             _open_url(url)
         print(f"Overboard dashboard already running at {url}")
         return 0
+
+    # The bind succeeded, so this is the one dashboard process — safe to start
+    # the scheduler's tick thread (slots fire from here; see overboard/scheduler.py).
+    api.scheduler.start()
 
     if prefer_window:
         try:

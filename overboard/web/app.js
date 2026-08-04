@@ -233,6 +233,7 @@ function wireControls() {
   document.getElementById("refresh").addEventListener("click", refresh);
   document.getElementById("rescan").addEventListener("click", rescan);
   document.getElementById("settings").addEventListener("click", openSettings);
+  document.getElementById("scheduler").addEventListener("click", openScheduler);
   document.getElementById("context-toggle").addEventListener("click", toggleContext);
   applyContextCollapsed();
 }

@@ -23,6 +23,9 @@ CREDENTIALS_PATH = STATE_DIR / "credentials.json"
 # CTO-authored per-project context (launches/milestones + vision). Written by the
 # dashboard, read-only for the agent — a 4th file so nothing races on writes.
 CONTEXT_PATH = STATE_DIR / "context.json"
+# Scheduler state (slots, run history, transcripts). Dashboard-owned: written
+# only by the scheduler thread inside the dashboard process.
+SCHEDULER_DIR = STATE_DIR / "scheduler"
 
 SCHEMA_VERSION = 3
 
@@ -275,11 +278,11 @@ def save_ai(ai: dict) -> None:
 
 
 def _atomic_write(path: Path, data: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     # Unique temp name per write so concurrent writers (e.g. the background
     # analyzer and a refresh both calling save_state) never clobber each other's
     # temp file — the old fixed ".tmp" name raced and threw on os.replace.
-    fd, tmp = tempfile.mkstemp(dir=str(STATE_DIR), prefix=path.name + ".", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=1)
