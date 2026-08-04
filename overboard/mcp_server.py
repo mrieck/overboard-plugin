@@ -494,6 +494,34 @@ def record_status(project: str, note: str):
     return f"status recorded for {project}"
 
 
+def _mac_app_running() -> bool:
+    """True when the Overboard Mac app is up. It already shows this data in a
+    native window, so throwing a browser tab at the user is noise."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        return subprocess.run(
+            ["pgrep", "-x", "Overboard"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+        ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _should_open_browser() -> bool:
+    """Whether launching the dashboard should also open a browser tab.
+
+    Two ways to say no: OVERBOARD_NO_BROWSER=1 in the environment (the Mac app
+    sets this on every session it schedules, so a run it started never pops a
+    tab), or the Mac app simply being open. OVERBOARD_FORCE_BROWSER=1 wins over
+    both."""
+    if os.environ.get("OVERBOARD_FORCE_BROWSER"):
+        return True
+    if os.environ.get("OVERBOARD_NO_BROWSER"):
+        return False
+    return not _mac_app_running()
+
+
 def launch_dashboard():
     """Start the Overboard dashboard (a local web server) if not already up, and
     return its URL. Open this in a browser to see everything."""
@@ -507,15 +535,18 @@ def launch_dashboard():
         logf = open(log_path, "a", buffering=1)
     except OSError:
         logf = subprocess.DEVNULL
+    open_browser = _should_open_browser()
+    argv = [sys.executable, app_py, "--serve", "--port", str(DASHBOARD_PORT)]
+    if not open_browser:
+        argv.append("--no-open")
     try:
-        subprocess.Popen(
-            [sys.executable, app_py, "--serve", "--port", str(DASHBOARD_PORT)],
-            stdout=logf, stderr=logf,
-            start_new_session=True,
-        )
+        subprocess.Popen(argv, stdout=logf, stderr=logf, start_new_session=True)
     except OSError as e:
         return {"error": f"could not launch dashboard: {e}", "url": url}
-    return {"url": url, "note": f"dashboard starting; logs → {log_path}"}
+    note = f"dashboard starting; logs → {log_path}"
+    if not open_browser:
+        note += " · no browser tab opened (the Overboard Mac app is showing this data)"
+    return {"url": url, "opened_browser": open_browser, "note": note}
 
 
 # ============================ MCP tool table ===============================

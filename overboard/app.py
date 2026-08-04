@@ -1250,10 +1250,15 @@ def _open_url(url: str) -> None:
         pass
 
 
-def run_dashboard(config: dict, port: int, prefer_window: bool) -> int:
+def run_dashboard(config: dict, port: int, prefer_window: bool,
+                  open_browser: bool = True) -> int:
     """Serve the dashboard over stdlib HTTP (zero deps). Opens a native
     pywebview window if that package happens to be installed and wanted, else
-    the default browser. Boots even with no credentials — onboard via Settings."""
+    the default browser. Boots even with no credentials — onboard via Settings.
+
+    `open_browser` false (--no-open) serves headlessly and shows no UI at all —
+    for callers that already have a window on this data (the Mac app) or want
+    the server without a tab."""
     from http.server import ThreadingHTTPServer
 
     api = Api(config)
@@ -1261,7 +1266,9 @@ def run_dashboard(config: dict, port: int, prefer_window: bool) -> int:
     try:
         httpd = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(api))
     except OSError:
-        _open_url(url)  # already running — just point a browser at it
+        # Already running — point a browser at it, unless we were told not to.
+        if open_browser:
+            _open_url(url)
         print(f"Overboard dashboard already running at {url}")
         return 0
 
@@ -1275,7 +1282,8 @@ def run_dashboard(config: dict, port: int, prefer_window: bool) -> int:
         except ImportError:
             pass
 
-    _open_url(url)
+    if open_browser:
+        _open_url(url)
     print(f"Overboard dashboard: {url}  (Ctrl-C to stop)")
     try:
         httpd.serve_forever()
@@ -1307,9 +1315,10 @@ def main() -> int:
     # a Bitbucket/GitHub token in the Settings panel.
     # --serve: headless server (spawned by the MCP launch_dashboard tool) —
     # opens a browser tab. Default (direct run): native window if pywebview is
-    # installed, otherwise browser.
-    prefer_window = "--serve" not in sys.argv
-    return run_dashboard(config, _port_from_argv(), prefer_window)
+    # installed, otherwise browser. --no-open: serve with no UI at all.
+    open_browser = "--no-open" not in sys.argv
+    prefer_window = "--serve" not in sys.argv and open_browser
+    return run_dashboard(config, _port_from_argv(), prefer_window, open_browser)
 
 
 if __name__ == "__main__":
