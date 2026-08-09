@@ -27,7 +27,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import herdr, schedule, store
+from . import herdr, schedule, store, workspaces
 
 SCHED_DIR = store.SCHEDULER_DIR
 SLOTS_PATH = SCHED_DIR / "slots.json"
@@ -166,6 +166,7 @@ class Scheduler:
                "state": state, "started_at": _now_iso(), "ended_at": None,
                "outcome": outcome, "reason": reason, "completion_message": None,
                "transcript_file": None,
+               "workspace_id": slot.get("workspace_id"),
                "timeout_minutes": slot.get("timeout_minutes") or DEFAULT_TIMEOUT_MINUTES}
         if outcome:
             rec["ended_at"] = rec["started_at"]
@@ -184,13 +185,27 @@ class Scheduler:
                 self._launching = False
 
     def _begin_run(self, run: dict) -> None:
+        # A workspace-linked run re-resolves the workspace at fire time — a
+        # deleted/moved workspace fails loudly instead of running in a ghost dir.
+        if run.get("workspace_id"):
+            ws = workspaces.workspace_by_id(run["workspace_id"])
+            if ws is None:
+                return self._record_failure(
+                    run, "the linked task workspace no longer exists")
+            run["cwd"] = ws["path"]
         cwd = run["cwd"]
         cache_root = str(store.STATE_DIR.resolve())
+        plugins_root = str((Path.home() / ".claude" / "plugins").resolve())
         resolved = str(Path(cwd).expanduser().resolve()) if cwd else ""
         if not cwd or not Path(cwd).expanduser().is_dir():
             return self._record_failure(run, f"working directory does not exist: {cwd}")
         if resolved == cache_root or resolved.startswith(cache_root + "/"):
             return self._record_failure(run, "refusing to run inside the plugin cache")
+        if resolved == plugins_root or resolved.startswith(plugins_root + "/"):
+            # Mirrors the Mac app's PluginCacheGuard: a run here could rewrite
+            # installed plugin files out from under every session.
+            return self._record_failure(
+                run, "refusing to run inside ~/.claude/plugins")
         run["state"] = "launching"
         run["started_at"] = _now_iso()  # queued time isn't run time
         # Normalize to the absolute path so the Stop-event cwd match holds even
@@ -200,6 +215,10 @@ class Scheduler:
             launched = herdr.launch(run["cwd"], run["slot_name"], run["prompt"])
         except herdr.HerdrError as e:
             return self._record_failure(run, e.message or str(e))
+        # herdr's result has its own workspace_id (a pane-tree id) — don't let
+        # it clobber the run's Overboard task-workspace link.
+        launched = dict(launched)
+        launched["herdr_workspace_id"] = launched.pop("workspace_id", None)
         run.update(launched)
         run["state"] = "running"
         with self._lock:
@@ -377,6 +396,14 @@ class Scheduler:
         name = (slot.get("name") or "").strip()
         cwd = (slot.get("cwd") or "").strip()
         prompt = (slot.get("prompt") or "").strip()
+        workspace_id = slot.get("workspace_id") or None
+        if workspace_id:
+            # A workspace-linked slot always runs in the workspace — the cwd
+            # follows the workspace, whatever the form said.
+            ws = workspaces.workspace_by_id(workspace_id)
+            if ws is None:
+                raise ValueError(f"no such task workspace: {workspace_id}")
+            cwd = ws["path"]
         if not name:
             raise ValueError("the slot needs a name")
         if not cwd or not Path(cwd).expanduser().is_dir():
@@ -393,12 +420,14 @@ class Scheduler:
             if existing:
                 existing.update({"name": name, "cwd": cwd, "prompt": prompt,
                                  "schedule": spec, "timeout_minutes": timeout,
+                                 "workspace_id": workspace_id,
                                  "enabled": bool(slot.get("enabled"))})
                 target = existing
             else:
                 target = {"id": uuid.uuid4().hex, "name": name, "cwd": cwd,
                           "prompt": prompt, "schedule": spec,
                           "timeout_minutes": timeout,
+                          "workspace_id": workspace_id,
                           # New slots save disabled — enabling is an explicit step.
                           "enabled": False,
                           "last_fired_at": None, "created_at": _now_iso()}
@@ -406,14 +435,24 @@ class Scheduler:
             self._next_due[target["id"]] = (
                 schedule.next_fire(spec, datetime.now()) if target["enabled"] else None)
             self._persist_slots()
+        if workspace_id:
+            workspaces.set_slot_link(workspace_id, target["id"])
         return self.view()
+
+    def slot_for_workspace(self, workspace_id: str) -> "dict | None":
+        with self._lock:
+            return next((dict(s) for s in self._slots
+                         if s.get("workspace_id") == workspace_id), None)
 
     def delete_slot(self, slot_id: str) -> dict:
         with self._lock:
+            gone = next((s for s in self._slots if s["id"] == slot_id), None)
             self._slots = [s for s in self._slots if s["id"] != slot_id]
             self._queue = [r for r in self._queue if r["slot_id"] != slot_id]
             self._next_due.pop(slot_id, None)
             self._persist_slots()
+        if gone and gone.get("workspace_id"):
+            workspaces.set_slot_link(gone["workspace_id"], None)
         return self.view()
 
     def toggle_slot(self, slot_id: str, enabled: bool) -> dict:

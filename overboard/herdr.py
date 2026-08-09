@@ -190,12 +190,52 @@ def launch(cwd: str, name: str, prompt: str, ready_timeout: float = 45.0) -> dic
     try:
         _wait_until_promptable(run["pane_id"], ready_timeout)
         call("agent.prompt", {"target": run["agent_name"], "text": prompt})
+        _ensure_prompt_submitted(run["pane_id"], prompt)
     except HerdrError:
         # The agent is up but wouldn't take the prompt — don't strand a live
         # session in the user's workspace.
         terminate(run["pane_id"])
         raise
     return run
+
+
+def _agent_status(pane_id: str) -> str:
+    try:
+        agents = call("agent.list").get("agents") or []
+        info = next((a for a in agents if a.get("pane_id") == pane_id), None)
+        return (info or {}).get("agent_status") or "unknown"
+    except HerdrError:
+        return "unknown"
+
+
+def _ensure_prompt_submitted(pane_id: str, prompt: str) -> None:
+    """agent.prompt returns agent_prompted even when the submit keystroke is
+    lost — right after startup the TUI can eat the Enter (the text sits in the
+    composer, or vanishes entirely, and agent_status stays idle). Verify the
+    agent actually went to work; nudge with a bare CR, then retype the whole
+    prompt as a last resort. Extra CRs on an empty composer are no-ops, so a
+    prompt that already finished can't be double-fired into a new turn."""
+    def working_within(secs: float) -> bool:
+        deadline = time.monotonic() + secs
+        while time.monotonic() < deadline:
+            if _agent_status(pane_id) not in ("idle", "unknown"):
+                return True
+            time.sleep(0.5)
+        return False
+
+    if working_within(4.0):
+        return
+    try:
+        call("pane.send_text", {"pane_id": pane_id, "text": "\r"})
+    except HerdrError:
+        return
+    if working_within(4.0):
+        return
+    try:  # composer likely empty — retype the prompt and submit
+        call("pane.send_text", {"pane_id": pane_id, "text": prompt + "\r"})
+    except HerdrError:
+        pass
+    working_within(4.0)
 
 
 def probe(pane_id: str) -> dict:

@@ -82,6 +82,34 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
   MCP server and hooks never touch it. It only *reads* `events.jsonl` (Stop
   events mark a scheduled run complete). Distinct from the Mac app's scheduler
   state, which is app-private under `~/Library/Application Support`.
+- `plugins_popular.json` — **dashboard-owned** 6h cache of the public
+  plugmyplugin.com popular-plugins API (`claudeplugins.fetch_popular`).
+
+## Claude plugin management (claudeplugins.py + workspaces.py)
+
+- `overboard/claudeplugins.py` reads Claude Code's own registry files
+  (`~/.claude/plugins/installed_plugins.json` v2, `known_marketplaces.json`,
+  and the `enabledPlugins` maps in user/project/local settings.json) to build
+  the plugin inventory — **read-only**; every mutation goes through the
+  `claude plugin ...` CLI as a subprocess on a single-worker job queue (one at
+  a time, so concurrent invocations never race Claude's own registry writes).
+  Shelling out is fine here — the key-free rule bans external *inference*
+  APIs, not subprocesses (git/herdr/terminals already work this way).
+- **Task workspaces** live at `~/OverboardWork/<project>/<task>/`
+  (`overboard/workspaces.py`). Each has `.claude/settings.json` (project-scope
+  `enabledPlugins` — exactly that task's plugins — plus pinned
+  `extraKnownMarketplaces`), `CLAUDE.md` (the brief), `work/` (the task's
+  persistent archive), and `workspace.json` (the manifest, written last — its
+  presence marks the workspace valid; the filesystem is the registry, there is
+  no central index). Single writer: the dashboard `Api`. **Scheduled sessions
+  write only `work/`** — the generated CLAUDE.md tells them so. Workspace
+  creation pre-installs its plugins at project scope via the CLI so the first
+  scheduled run never hits a marketplace trust prompt.
+- Scheduler slots may carry an optional `workspace_id`: `save_slot` forces the
+  slot's cwd to the workspace path and back-links `slot_id` into
+  `workspace.json`; `_begin_run` re-resolves the workspace at fire time (a
+  deleted workspace fails the run loudly) and refuses to run inside
+  `~/.claude/plugins` (mirrors the Mac app's PluginCacheGuard).
 
 `store._atomic_write` uses a **unique** temp file (`tempfile.mkstemp`) per write —
 a fixed `.tmp` name raced when the background analyzer and a refresh saved state

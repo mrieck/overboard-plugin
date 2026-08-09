@@ -234,6 +234,7 @@ function wireControls() {
   document.getElementById("rescan").addEventListener("click", rescan);
   document.getElementById("settings").addEventListener("click", openSettings);
   document.getElementById("scheduler").addEventListener("click", openScheduler);
+  document.getElementById("plugins").addEventListener("click", openPlugins);
   document.getElementById("context-toggle").addEventListener("click", toggleContext);
   applyContextCollapsed();
 }

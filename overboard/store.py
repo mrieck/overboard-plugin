@@ -26,6 +26,8 @@ CONTEXT_PATH = STATE_DIR / "context.json"
 # Scheduler state (slots, run history, transcripts). Dashboard-owned: written
 # only by the scheduler thread inside the dashboard process.
 SCHEDULER_DIR = STATE_DIR / "scheduler"
+# Cached popular-plugins payload from plugmyplugin.com. Dashboard-owned.
+POPULAR_PLUGINS_PATH = STATE_DIR / "plugins_popular.json"
 
 SCHEMA_VERSION = 3
 

@@ -132,6 +132,7 @@ function schedList(body) {
       schedCall("toggle_slot", { slot_id: slot.id, enabled: enable.checked }));
     top.appendChild(enable);
     top.appendChild(el("span", "sched-slot-name", slot.name));
+    if (slot.workspace_id) top.appendChild(el("span", "plug-ws-tag", "↳ workspace"));
     top.appendChild(el("span", "subtle", slot.summary || ""));
     const btns = el("span", "sched-slot-btns");
     const run = el("button", "btn ghost small", "Run now");

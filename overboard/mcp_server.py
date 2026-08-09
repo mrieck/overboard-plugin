@@ -28,7 +28,7 @@ from datetime import date, datetime, timezone
 # we're launched (this file lives at <root>/overboard/mcp_server.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from overboard import analysis, events, localrepo, manager, providers, store  # noqa: E402
+from overboard import analysis, claudeplugins, events, localrepo, manager, providers, store, workspaces  # noqa: E402
 
 STOP_TYPES = ("Stop", "SubagentStop")
 DASHBOARD_PORT = 8787
@@ -91,6 +91,15 @@ def get_pending_work():
 
 def list_projects():
     return [{"slug": s, "path": p} for s, p in sorted(_known_slugs().items())]
+
+
+def get_plugin_inventory():
+    """Read-only Claude-plugin picture: installs + where each plugin is
+    enabled (user scope / projects / task workspaces). Same scanner the
+    dashboard Plugins panel uses; this tool never writes anything."""
+    state = store.load_state()
+    return claudeplugins.inventory(localrepo.links_for_machine(state),
+                                   workspaces.list_workspaces())
 
 
 def get_commits(slug: str, limit: int = 20):
@@ -556,6 +565,7 @@ _OBJ_ARR = {"type": "array", "items": {"type": "object"}}
 TOOLS = [
     ("get_pending_work", "Your to-do list. Returns {items, first_run, heavy_budget, deferred, notice}. Each item is a project needing attention, with need_summary (commits changed), need_digest (new finished work), need_review (work landed since the last recent-work review — see record_work_review; review_since maps each repo slug to the last-reviewed hash or null, first_review means no prior review exists, and recent_review_titles lists prior card titles for theme-name consistency), need_panels (dashboard panels missing or stale — spawn the repo-analyst subagent for EXACTLY the repos in panel_repos, no others), and/or need_launch (the CTO's active launch is overdue or due within 7 days — surfaced even when NO code moved, so a quiet-but-late project still reaches you), plus its repo slugs. HEAVY WORK IS BUDGETED: the server grants panels + first-ever reviews to at most heavy_budget projects per ~30-min window; a deferred project carries deferred_heavy:true with those flags cleared — do NOT analyze it, it returns with a grant on a later pass ('deferred' lists everything postponed). first_run means the board is empty: write cheap summaries for ALL items, heavy analysis only where granted. ALWAYS relay 'notice' to the user when non-empty. Never re-call this tool within a pass to get more slots. Entries carry `launch` {type, title, target_date, days_until, status ('overdue'|'due_soon'|null)} when the CTO has an active launch — use it to ground your prose; on need_launch, check the launch goals against recent commits/finished work and, if they look unmet or slipped, flag_for_review ONE specific thing (a need_launch nudge is suppressed for the rest of the day once you've flagged that project, so it won't spam the loop). Call get_project_context when you need the full plan (goals, push-back history, vision). items may also include a grouping entry {kind:'grouping', need_grouping:true, all_repos:[...], ungrouped:[...]} — handle it FIRST by calling set_grouping so projects are named right. Start every update pass here; if items is empty, nothing to do.", {}, [], get_pending_work),
     ("list_projects", "Repo slugs Overboard tracks on this machine + local paths. Use the slug for get_repo_analysis / get_commits / set_architecture.", {}, [], list_projects),
+    ("get_plugin_inventory", "READ-ONLY map of the Claude plugins on this machine: per plugin its installs ({scope: user|project|local, project_path, version, missing}), whether it's enabled at user scope, and everywhere it's enabled per-directory (projects and ~/OverboardWork task workspaces, with scope). Also lists known marketplaces, task workspaces, and 'orphans' (enabled somewhere but not installed). Use it to answer 'which plugins run where', to mention plugin drift in digests (e.g. an orphan, or an install whose directory is gone), or to see what a scheduled task workspace can load. Managing plugins/workspaces is the CTO's job in the dashboard Plugins panel — never write settings files yourself.", {}, [], get_plugin_inventory),
     ("get_commits", "Recent Bitbucket commits for a repo (includes work pushed from other machines). Basis for a commit-status summary.", {"slug": _S, "limit": _I}, ["slug"], get_commits),
     ("get_recent_diff", "Real diff for a repo with NO local clone on THIS machine (e.g. a Mac-only iOS app seen from the Linux/DO box). Fetches the unified diff for review_since..head straight from the provider (GitHub compare / Bitbucket diff) so you can build a real source:'diffs' recent-work card instead of a messages-only one. slug is a repo slug; since = review_since[slug] (the last-reviewed hash; omit for a bounded first review). Returns {source:'diffs', base, head, patch, files, truncated} — review the patch yourself and call record_work_review with reviewed_heads={slug: head}. If it returns an 'error' (no creds / force-push / provider down), fall back to get_commits with source:'messages'. When a local clone DOES exist, prefer the work-reviewer subagent instead.", {"slug": _S, "since": _S}, ["slug"], get_recent_diff),
     ("get_repo_analysis", "Static analysis of a repo's local clone: prompts, DB-schema shape, file structure, and manifest_digest (turn it into an architecture write-up via set_architecture). No AI is run — that's your job.", {"slug": _S}, ["slug"], get_repo_analysis),

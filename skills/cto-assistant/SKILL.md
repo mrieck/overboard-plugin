@@ -216,6 +216,17 @@ Use it to make your output *matter to the CTO*:
   the judgement of whether to flag is still yours.
 - If there's no launch or vision set, just skip this — don't invent goals.
 
+## Plugin inventory (`get_plugin_inventory`)
+
+`get_plugin_inventory` is a **read-only** map of the Claude plugins on this
+machine: each plugin's installs (scope + directory + version), whether it's
+enabled at user scope, and every project / `~/OverboardWork` task workspace
+that enables it. Use it when the CTO asks "which plugins run where", or to
+mention plugin drift worth a flag in a digest — an **orphan** (enabled
+somewhere but not installed) or an install whose directory is `missing`.
+Managing plugins and task workspaces is the CTO's job in the dashboard's 🔌
+Plugins panel; you never edit settings files or `~/OverboardWork` yourself.
+
 ## Writing summaries (`set_project_summary`)
 
 1–2 plain sentences: what was worked on recently and where the project stands.

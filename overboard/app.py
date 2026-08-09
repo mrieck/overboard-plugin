@@ -21,7 +21,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from overboard import analysis, debuglog, diagram, events, localgit, localrepo, manager, providers, schedule, scheduler, store
+from overboard import analysis, claudeplugins, debuglog, diagram, events, localgit, localrepo, manager, providers, schedule, scheduler, store, workspaces
 
 APP_TITLE = "Overboard"
 ICON_NORMAL = "applications-development"
@@ -1166,6 +1166,68 @@ class Api:
         return {"ok": True, "summary": schedule.summary(clean),
                 "next_fire": nf.isoformat(timespec="seconds") if nf else None}
 
+    # ---- Claude plugin management (inventory + workspaces + actions) ------
+    def plugins_view(self) -> dict:
+        """One payload the Plugins panel polls: install inventory + where each
+        plugin is enabled, task workspaces (with their slot, if linked), CLI
+        job progress, and whether the claude CLI is even present."""
+        ws_list = workspaces.list_workspaces()
+        for ws in ws_list:
+            slot = self.scheduler.slot_for_workspace(ws["id"])
+            if slot:
+                try:
+                    slot["summary"] = schedule.summary(slot.get("schedule") or {})
+                except Exception:
+                    slot["summary"] = "?"
+            ws["slot"] = slot
+        binary = claudeplugins.claude_binary()
+        links = localrepo.links_for_machine(self.state)
+        return {"claude_cli": {"found": binary is not None, "path": binary},
+                "inventory": claudeplugins.inventory(links, ws_list),
+                "workspaces": ws_list,
+                "jobs": claudeplugins.jobs_view(),
+                "known_paths": sorted(set(links.values())),
+                "projects": sorted(self.state.get("projects", {}).keys())}
+
+    def plugin_action(self, action: str, plugin_id: str, scope: str = "user",
+                      cwd: "str | None" = None) -> dict:
+        claudeplugins.plugin_action(action, plugin_id, scope, cwd)
+        return self.plugins_view()
+
+    def add_marketplace(self, source: str) -> dict:
+        claudeplugins.add_marketplace(source)
+        return self.plugins_view()
+
+    def popular_plugins(self, force: bool = False) -> dict:
+        return claudeplugins.fetch_popular(force=bool(force))
+
+    def save_workspace(self, workspace: dict) -> dict:
+        if workspace.get("id"):
+            workspaces.update(workspace["id"],
+                              plugins=workspace.get("plugins"),
+                              brief=workspace.get("brief"))
+        else:
+            workspaces.create(workspace.get("project") or "",
+                              workspace.get("task") or "",
+                              plugins=workspace.get("plugins"),
+                              brief=workspace.get("brief") or "")
+        return self.plugins_view()
+
+    def delete_workspace(self, workspace_id: str, keep_work: bool = False) -> dict:
+        if self.scheduler.slot_for_workspace(workspace_id):
+            raise ValueError("this workspace has a schedule — unlink or delete "
+                             "the slot first")
+        workspaces.delete(workspace_id, keep_work=bool(keep_work))
+        return self.plugins_view()
+
+    def link_workspace_slot(self, workspace_id: str, slot: dict) -> dict:
+        """Create/update the slot that runs this workspace on a schedule.
+        The scheduler forces cwd to the workspace path and back-links slot_id."""
+        slot = dict(slot or {})
+        slot["workspace_id"] = workspace_id
+        self.scheduler.save_slot(slot)
+        return self.plugins_view()
+
 
 def _make_handler(api: "Api"):
     from http.server import BaseHTTPRequestHandler
@@ -1179,7 +1241,9 @@ def _make_handler(api: "Api"):
                "pushback_launch", "complete_launch", "save_vision",
                "set_project_status", "rename_project",
                "scheduler_view", "save_slot", "delete_slot", "toggle_slot",
-               "run_slot_now", "stop_run", "get_run_transcript", "preview_schedule"}
+               "run_slot_now", "stop_run", "get_run_transcript", "preview_schedule",
+               "plugins_view", "plugin_action", "add_marketplace", "popular_plugins",
+               "save_workspace", "delete_workspace", "link_workspace_slot"}
     CONTENT_TYPES = {
         ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
         ".json": "application/json", ".svg": "image/svg+xml",
