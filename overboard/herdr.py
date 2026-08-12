@@ -177,11 +177,22 @@ def launch(cwd: str, name: str, prompt: str, ready_timeout: float = 45.0) -> dic
     ensure_server()
     aname = agent_name(name)
     pane = _pane_for_run(cwd, name)
-    started = call("agent.start",
-                   {"name": aname, "kind": AGENT_KIND, "pane_id": pane["pane_id"],
-                    "args": ["--permission-mode", "auto"],
-                    "timeout_ms": STARTUP_TIMEOUT_MS},
-                   timeout=STARTUP_TIMEOUT_MS / 1000 + 15)
+    # A fresh tab's root pane may still be bringing its shell up, and agent.start
+    # in that window fails agent_pane_busy (seen live 2026-08-12). Retry briefly;
+    # any other error is real.
+    deadline = time.monotonic() + 8.0
+    while True:
+        try:
+            started = call("agent.start",
+                           {"name": aname, "kind": AGENT_KIND, "pane_id": pane["pane_id"],
+                            "args": ["--permission-mode", "auto"],
+                            "timeout_ms": STARTUP_TIMEOUT_MS},
+                           timeout=STARTUP_TIMEOUT_MS / 1000 + 15)
+            break
+        except HerdrError as err:
+            if getattr(err, "code", None) != "agent_pane_busy" or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
     agent = started.get("agent") or {}
     run = {"pane_id": agent.get("pane_id") or pane["pane_id"],
            "tab_id": agent.get("tab_id"),
