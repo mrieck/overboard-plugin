@@ -28,6 +28,11 @@ Prefer this vocabulary in code and copy: "CTO", "the team", "assistant",
    - `.mcp.json` → `overboard/mcp_server.py`: a hand-rolled stdlib JSON-RPC stdio
      MCP server — the assistant's hands (read inputs, write results).
    - `commands/overboard.md`: the `/overboard` command.
+   - `commands/dispatch.md`: the `/overboard:dispatch` command — the Mac app's
+     Telegram dispatcher hands it a request-file path; the session resolves the
+     target project via `list_projects`, writes a response JSON next to it, and
+     nudges the app with `open -g overboard://dispatch/wake`. It never executes
+     the task itself and never sees chat credentials.
    - `skills/cto-assistant/SKILL.md`: the assistant's full playbook.
 2. **Dashboard** — `python3 -m overboard.app`: a stdlib `http.server` you view in
    a browser at `http://localhost:8787`. Two-pane UI (see below). Pure viewer.
