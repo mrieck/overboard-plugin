@@ -90,7 +90,21 @@ def get_pending_work():
 
 
 def list_projects():
-    return [{"slug": s, "path": p} for s, p in sorted(_known_slugs().items())]
+    """Every repo with a local clone on this machine: the source-matched links
+    plus any repo whose state record carries a path (the board's sidebar shows
+    those too — a dispatcher that only saw the links rejected real projects).
+    Each entry names its Overboard project so callers can match by either."""
+    state = store.load_state()
+    links = dict(localrepo.links_for_machine(state))
+    project_of: dict[str, str] = {}
+    for name, proj in state.get("projects", {}).items():
+        for slug, repo in (proj.get("repos") or {}).items():
+            project_of[slug] = name
+            path = repo.get("path")
+            if path and slug not in links and os.path.isdir(os.path.expanduser(path)):
+                links[slug] = path
+    return [{"slug": s, "path": p, "project": project_of.get(s, s)}
+            for s, p in sorted(links.items())]
 
 
 def get_plugin_inventory():

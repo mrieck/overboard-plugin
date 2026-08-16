@@ -21,9 +21,15 @@ by design).
 
 ## 2. Resolve the project
 
-Call the Overboard MCP tool **`list_projects`** to see every project on this
-machine (slug + local path). Work out which one the message targets — by name,
-by path fragment, or by what the described work obviously belongs to.
+Call the Overboard MCP tool **`list_projects`** to see every repo with a local
+clone on this machine — each entry is `{slug, path, project}` where `project`
+is the Overboard project name shown in the board's sidebar (a project can have
+several repos, e.g. `socialcue` → socialcue-website, socialcue-plugin…). Work
+out which one the message targets — by project name, repo slug, path fragment,
+or by what the described work obviously belongs to. When a project has several
+repos, pick the repo the task is about (a website task → the `-website` repo);
+if the message doesn't say and it isn't obvious, use the project's main repo
+rather than rejecting.
 
 Write a **`reject`** response (schema below) and stop if:
 - no project matches with reasonable confidence — say what you'd need;
