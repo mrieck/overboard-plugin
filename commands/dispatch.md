@@ -19,25 +19,38 @@ Read the JSON file at `$ARGUMENTS`. `message.text` is what the CTO sent;
 file — do not go looking for chat credentials or history (there are none here
 by design).
 
-## 2. Resolve the project
+## 2. Resolve where the task runs
 
-Call the Overboard MCP tool **`list_projects`** to see every repo with a local
-clone on this machine — each entry is `{slug, path, project}` where `project`
-is the Overboard project name shown in the board's sidebar (a project can have
-several repos, e.g. `socialcue` → socialcue-website, socialcue-plugin…). Work
-out which one the message targets — by project name, repo slug, path fragment,
-or by what the described work obviously belongs to. When a project has several
-repos, pick the repo the task is about (a website task → the `-website` repo);
-if the message doesn't say and it isn't obvious, use the project's main repo
-rather than rejecting.
+The request file's `root_folder` is the CTO's workspace directory (typically
+`~/Sites`); every project lives somewhere under it. Be generous, not strict —
+the CTO would rather the task run in a sensible folder than get a rejection.
+Work down this ladder and take the first rung that fits:
 
-Write a **`reject`** response (schema below) and stop if:
-- no project matches with reasonable confidence — say what you'd need;
-- the MCP tool isn't available (the Overboard MCP server isn't connected);
-- the message isn't a task at all.
+1. **A tracked project or repo.** Call the Overboard MCP tool **`list_projects`**
+   — each entry is `{slug, path, project}` (`project` is the name shown in the
+   board's sidebar; a project can have several repos, e.g. `socialcue` →
+   socialcue-website, socialcue-plugin…). Match by project name, repo slug,
+   path fragment, or by what the described work obviously belongs to. In a
+   multi-repo project pick the repo the task is about (a website task → the
+   `-website` repo); if it isn't obvious, use the project's main repo.
+2. **A folder the CTO names** (by name or path). If it exists under
+   `root_folder`, use it — tracked or not. Use `ls` on `root_folder` when a
+   name is only approximate.
+3. **A new folder.** If the message asks to start/create something new, or
+   names a folder that doesn't exist, choose a sensible kebab-case name under
+   `root_folder` and set `"create": true` on `project` — the app creates it.
+4. **Nothing points anywhere.** If the message says nothing about where and no
+   project is a plausible fit, still don't reject a real task: use
+   `root_folder` itself with `"create": false`.
 
-Never guess between two plausible projects — reject and name both candidates so
-the CTO can resend with the project name.
+Write a **`reject`** response (schema below) and stop only if:
+- the message isn't a task at all (a greeting, a question for you);
+- it's genuinely ambiguous between two tracked projects **and** the task would
+  be wrong in the other one — name both so the CTO can resend;
+- the MCP tool isn't available and the message names no folder either.
+
+Never place a task outside `root_folder` unless `list_projects` gave you that
+path.
 
 ## 3. Compose the task prompt
 
@@ -58,7 +71,7 @@ Write this JSON — with your Write tool, to `response_path` **exactly**:
   "version": 1,
   "dispatch_id": "<dispatch_id from the request>",
   "action": "create_task",
-  "project": { "name": "<project name>", "path": "/absolute/local/path" },
+  "project": { "name": "<project or folder name>", "path": "/absolute/local/path", "create": false },
   "task": {
     "name": "<short task name, a few words>",
     "prompt": "<the single-paragraph task prompt>",
