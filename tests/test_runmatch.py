@@ -1,0 +1,123 @@
+"""Pure-logic tests for overboard.runmatch (port of the Mac app's RunMatcher tests).
+Run: python3 -m unittest discover -s tests"""
+import os
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from overboard import runmatch  # noqa: E402
+
+T0 = 1_000_000.0
+CWD = "/Users/me/proj"
+
+
+def ev(typ, ts, sid="s1", cwd=CWD, **extra):
+    d = {"type": typ, "ts": ts, "session_id": sid, "cwd": cwd}
+    d.update(extra)
+    return d
+
+
+class CaptureTests(unittest.TestCase):
+    def test_captures_session_start_in_window(self):
+        v = runmatch.assess(CWD, T0, None, [ev("SessionStart", T0 + 3)], set())
+        self.assertEqual(v["session_id"], "s1")
+        self.assertTrue(v["captured"])
+        self.assertFalse(v["completed"])
+
+    def test_ignores_session_start_outside_window(self):
+        events = [ev("SessionStart", T0 - 60, sid="old"),
+                  ev("SessionStart", T0 + runmatch.SESSION_START_LATE + 1, sid="late")]
+        v = runmatch.assess(CWD, T0, None, events, set())
+        self.assertIsNone(v["session_id"])
+
+    def test_skips_claimed_sessions(self):
+        events = [ev("SessionStart", T0 + 1, sid="other"), ev("SessionStart", T0 + 2, sid="mine")]
+        v = runmatch.assess(CWD, T0, None, events, {"other"})
+        self.assertEqual(v["session_id"], "mine")
+
+    def test_other_cwd_not_captured(self):
+        v = runmatch.assess(CWD, T0, None, [ev("SessionStart", T0 + 1, cwd="/elsewhere")], set())
+        self.assertIsNone(v["session_id"])
+
+
+class CompletionTests(unittest.TestCase):
+    def test_human_session_stop_in_same_cwd_is_ignored_once_captured(self):
+        # The run captured s1; a human's session h1 (started long before) stops
+        # in the same folder — must NOT complete the run.
+        events = [ev("SessionStart", T0 + 2, sid="s1"),
+                  ev("Stop", T0 + 30, sid="h1", last_message="human done")]
+        v = runmatch.assess(CWD, T0, None, events, set())
+        self.assertEqual(v["session_id"], "s1")
+        self.assertFalse(v["completed"])
+        self.assertIsNone(v["completion_message"])
+
+    def test_own_stop_completes_with_message(self):
+        events = [ev("SessionStart", T0 + 2), ev("Stop", T0 + 300, last_message="all done")]
+        v = runmatch.assess(CWD, T0, None, events, set())
+        self.assertTrue(v["completed"])
+        self.assertEqual(v["completion_message"], "all done")
+        self.assertEqual(v["last_activity_ts"], T0 + 300)
+
+    def test_fallback_by_cwd_when_no_session_start(self):
+        events = [ev("Stop", T0 - 100, sid="before", last_message="old"),
+                  ev("Stop", T0 + 100, sid="unknown", last_message="new")]
+        v = runmatch.assess(CWD, T0, None, events, set())
+        self.assertIsNone(v["session_id"])
+        self.assertTrue(v["completed"])
+        self.assertEqual(v["completion_message"], "new")
+
+    def test_stop_with_pending_subagent_is_not_completion(self):
+        events = [ev("SessionStart", T0 + 2),
+                  ev("PostToolUse", T0 + 10, tool_name="Task"),
+                  ev("Stop", T0 + 20, last_message="turn boundary")]
+        v = runmatch.assess(CWD, T0, None, events, set())
+        self.assertFalse(v["completed"])
+        # ...until the subagent finishes and the wrapper stops again.
+        events += [ev("SubagentStop", T0 + 200), ev("Stop", T0 + 210, last_message="really done")]
+        v = runmatch.assess(CWD, T0, None, events, set())
+        self.assertTrue(v["completed"])
+        self.assertEqual(v["completion_message"], "really done")
+
+    def test_foreground_subagent_order_does_not_matter(self):
+        events = [ev("SessionStart", T0 + 2),
+                  ev("SubagentStop", T0 + 10),
+                  ev("PostToolUse", T0 + 10.1, tool_name="Agent"),
+                  ev("Stop", T0 + 20)]
+        self.assertTrue(runmatch.assess(CWD, T0, None, events, set())["completed"])
+
+    def test_session_end_always_completes(self):
+        events = [ev("SessionStart", T0 + 2), ev("PostToolUse", T0 + 5, tool_name="Task"),
+                  ev("SessionEnd", T0 + 50)]
+        self.assertTrue(runmatch.assess(CWD, T0, None, events, set())["completed"])
+
+    def test_known_session_id_is_used_directly(self):
+        events = [ev("Stop", T0 + 5, sid="s9", cwd="/moved/elsewhere", last_message="ok")]
+        v = runmatch.assess(CWD, T0, "s9", events, set())
+        self.assertTrue(v["completed"])
+        self.assertFalse(v["captured"])
+
+
+class NormalizeTests(unittest.TestCase):
+    def test_symlink_and_tilde_normalize_equal(self):
+        with tempfile.TemporaryDirectory() as d:
+            real = os.path.join(d, "real")
+            os.mkdir(real)
+            link = os.path.join(d, "link")
+            os.symlink(real, link)
+            self.assertEqual(runmatch.normalize_path(link), runmatch.normalize_path(real))
+        self.assertEqual(runmatch.normalize_path("~"), os.path.expanduser("~"))
+        self.assertEqual(runmatch.normalize_path(None), "")
+
+    def test_symlinked_cwd_matches_events(self):
+        with tempfile.TemporaryDirectory() as d:
+            real = os.path.join(d, "real")
+            os.mkdir(real)
+            link = os.path.join(d, "link")
+            os.symlink(real, link)
+            v = runmatch.assess(link, T0, None, [ev("SessionStart", T0 + 1, cwd=real)], set())
+            self.assertEqual(v["session_id"], "s1")
+
+
+if __name__ == "__main__":
+    unittest.main()

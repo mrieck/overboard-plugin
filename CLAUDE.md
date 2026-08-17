@@ -81,12 +81,15 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
   append-only and non-blocking; compaction re-appends any tail written during
   the rewrite before the atomic replace.
 - `credentials.json` — sources/tokens (see below).
-- `scheduler/` (slots.json, runs.json, active.json, transcripts/) —
+- `scheduler/` (slots.json, runs.json, active.json, queue.json, transcripts/) —
   **dashboard-owned**: written only by the scheduler thread inside the dashboard
   process (`overboard/scheduler.py`, started post-bind in `run_dashboard`); the
-  MCP server and hooks never touch it. It only *reads* `events.jsonl` (Stop
-  events mark a scheduled run complete). Distinct from the Mac app's scheduler
-  state, which is app-private under `~/Library/Application Support`.
+  MCP server and hooks never touch it. It only *reads* `events.jsonl`: a run
+  claims its SessionStart (by cwd, near launch), then a Stop/SessionEnd for that
+  session with no subagent in flight marks it complete (`overboard/runmatch.py`,
+  a port of the Mac app's RunMatcher — pure, unit-tested in `tests/`). Distinct
+  from the Mac app's scheduler state, which is app-private under
+  `~/Library/Application Support`.
 - `plugins_popular.json` — **dashboard-owned** 6h cache of the public
   plugmyplugin.com popular-plugins API (`claudeplugins.fetch_popular`).
 

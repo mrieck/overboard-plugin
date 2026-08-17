@@ -68,9 +68,15 @@ app. Each *slot* has a working directory, a prompt, and a simple schedule
 (daily / weekly / every N hours; deliberately simpler than cron). Runs launch
 inside [Herdr](https://herdr.dev) (macOS and Linux) as
 `claude --permission-mode auto` in an "Overboard" workspace, so you can watch
-or take over any run in Herdr's own UI. When a run's Stop hook fires, the
-scheduler captures the closing message and transcript, then closes the pane.
-State lives in `~/.cache/overboard/scheduler/`.
+or take over any run in Herdr's own UI. Each run is identified by its own
+Claude session (captured from the SessionStart hook), so a session of yours in
+the same folder is never mistaken for it; when the run's Stop hook fires — and
+no subagent it spawned is still working — the scheduler captures the closing
+message and transcript, then closes the pane. Queued runs survive a dashboard
+restart (a run that waited past its 30-minute window is skipped, not run
+stale). State lives in `~/.cache/overboard/scheduler/`.
+
+Tests: `python3 -m unittest discover -s tests` (stdlib only).
 
 Slots fire only while the dashboard server is running. On an always-on Linux
 box, run it as a systemd user service:

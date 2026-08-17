@@ -12,10 +12,11 @@ State lives in ~/.cache/overboard/scheduler/ (slots.json, runs.json,
 active.json, transcripts/). Single writer: this engine's thread(s) inside the
 dashboard process — the MCP server and hooks never touch it.
 
-Completion detection: a scheduled claude's Stop hook appends to events.jsonl
-(read-only here; append-only by construction) — a Stop event matching the run's
-cwd after its start marks the work done; we capture last_message, ask the agent
-to /exit, and close the pane.
+Completion detection: the plugin's hooks append to events.jsonl (read-only
+here; append-only by construction). A run claims the first unclaimed
+SessionStart in its cwd near launch, then a Stop/SessionEnd for THAT session
+(with no subagent still in flight) marks the work done — see runmatch.py. We
+capture last_message, ask the agent to /exit, and close the pane.
 """
 
 from __future__ import annotations
@@ -27,12 +28,13 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import herdr, schedule, store, workspaces
+from . import herdr, runmatch, schedule, store, workspaces
 
 SCHED_DIR = store.SCHEDULER_DIR
 SLOTS_PATH = SCHED_DIR / "slots.json"
 RUNS_PATH = SCHED_DIR / "runs.json"
 ACTIVE_PATH = SCHED_DIR / "active.json"
+QUEUE_PATH = SCHED_DIR / "queue.json"
 TRANSCRIPTS_DIR = SCHED_DIR / "transcripts"
 EVENTS_PATH = store.STATE_DIR / "events.jsonl"
 
@@ -41,6 +43,7 @@ MAX_ACTIVE = 1
 HISTORY_CAP = 200
 MISSED_GRACE = timedelta(minutes=30)
 EXIT_GRACE_SECS = 10
+EVENTS_TAIL_BYTES = 262144  # last 256KB of events.jsonl is plenty of window
 DEFAULT_TIMEOUT_MINUTES = 90
 HERDR_STATUS_TTL = 15  # seconds the cached installed/reachable answer is trusted
 
@@ -54,6 +57,27 @@ def _parse_iso(s) -> "datetime | None":
         return datetime.fromisoformat(s)
     except (TypeError, ValueError):
         return None
+
+
+def _read_events_tail(min_ts: float) -> list:
+    """Parse the tail of events.jsonl in log order, keeping events at/after
+    `min_ts`. Only the tail is read — the file is append-only and can be large."""
+    try:
+        with open(EVENTS_PATH, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - EVENTS_TAIL_BYTES))
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return []
+    events = []
+    for line in tail.splitlines():
+        try:
+            evt = json.loads(line)
+        except ValueError:
+            continue  # a torn first line, or a partial write
+        if isinstance(evt, dict) and (evt.get("ts") or 0) >= min_ts:
+            events.append(evt)
+    return events
 
 
 class Scheduler:
@@ -85,6 +109,7 @@ class Scheduler:
         for slot in self._slots:
             self._next_due[slot["id"]] = schedule.next_fire(slot.get("schedule") or {}, now)
         self._adopt_orphans()
+        self._restore_queue(now)
         threading.Thread(target=self._loop, daemon=True, name="ob-scheduler").start()
 
     @staticmethod
@@ -118,6 +143,32 @@ class Scheduler:
                 run["reason"] = "dashboard restarted; session no longer in herdr"
                 self._history.insert(0, run)
         self._persist_active()
+        self._persist_history()
+
+    def _restore_queue(self, now: datetime) -> None:
+        """Runs queued by a previous dashboard process but never launched. Re-queue
+        the fresh ones; anything that waited longer than the missed-window grace
+        is recorded as skipped (a 2am job must not launch at 9am because the
+        server came back), the same policy as a slept-through fire."""
+        pending = self._load_list(QUEUE_PATH, "runs")
+        if not pending:
+            return
+        for run in pending:
+            queued_at = _parse_iso(run.get("started_at")) or now
+            if now - queued_at > MISSED_GRACE:
+                run["state"] = None
+                run["ended_at"] = _now_iso()
+                if run.get("trigger") == "manual":
+                    run["outcome"] = "cancelled"
+                    run["reason"] = "dashboard restarted before it launched"
+                else:
+                    run["outcome"] = "skipped_missed_window"
+                    run["reason"] = "queued, but the dashboard was down past its window"
+                self._history.insert(0, run)
+            elif not self._slot_busy(run.get("slot_id")):
+                run["state"] = "queued"
+                self._queue.append(run)
+        self._persist_queue()
         self._persist_history()
 
     def _loop(self) -> None:
@@ -154,6 +205,7 @@ class Scheduler:
                     self._persist_history()
                 elif not self._slot_busy(slot["id"]):
                     self._queue.append(self._run_record(slot, "scheduled"))
+                    self._persist_queue()
 
     def _slot_busy(self, slot_id: str) -> bool:
         return any(r.get("slot_id") == slot_id for r in self._queue + self._active)
@@ -177,6 +229,7 @@ class Scheduler:
             if self._launching or len(self._active) >= MAX_ACTIVE or not self._queue:
                 return
             run = self._queue.pop(0)
+            self._persist_queue()
             self._launching = True
         try:
             self._begin_run(run)
@@ -194,9 +247,9 @@ class Scheduler:
                     run, "the linked task workspace no longer exists")
             run["cwd"] = ws["path"]
         cwd = run["cwd"]
-        cache_root = str(store.STATE_DIR.resolve())
-        plugins_root = str((Path.home() / ".claude" / "plugins").resolve())
-        resolved = str(Path(cwd).expanduser().resolve()) if cwd else ""
+        cache_root = runmatch.normalize_path(str(store.STATE_DIR))
+        plugins_root = runmatch.normalize_path(str(Path.home() / ".claude" / "plugins"))
+        resolved = runmatch.normalize_path(cwd) if cwd else ""
         if not cwd or not Path(cwd).expanduser().is_dir():
             return self._record_failure(run, f"working directory does not exist: {cwd}")
         if resolved == cache_root or resolved.startswith(cache_root + "/"):
@@ -208,9 +261,10 @@ class Scheduler:
                 run, "refusing to run inside ~/.claude/plugins")
         run["state"] = "launching"
         run["started_at"] = _now_iso()  # queued time isn't run time
-        # Normalize to the absolute path so the Stop-event cwd match holds even
-        # when the slot was written with a ~.
+        # Absolute path for launching/display; event matching normalizes further
+        # (symlinks, /tmp vs /private/tmp) on both sides — see runmatch.
         run["cwd"] = str(Path(cwd).expanduser())
+        run["session_id"] = None  # claimed from the SessionStart hook once seen
         try:
             launched = herdr.launch(run["cwd"], run["slot_name"], run["prompt"])
         except herdr.HerdrError as e:
@@ -271,9 +325,13 @@ class Scheduler:
 
         if run.get("exit_deadline"):
             return  # already winding down
-        stop = self._match_stop_event(run)
-        if stop is not None:
-            run["completion_message"] = stop.get("last_message")
+        verdict = self._assess_run(run)
+        if verdict.get("captured"):
+            run["session_id"] = verdict["session_id"]
+            with self._lock:
+                self._persist_active()
+        if verdict.get("completed"):
+            run["completion_message"] = verdict.get("completion_message")
             run["state"] = "exiting"
             run["exit_deadline"] = (now + timedelta(seconds=EXIT_GRACE_SECS)).isoformat(
                 timespec="seconds")
@@ -281,33 +339,21 @@ class Scheduler:
                 self._persist_active()
             herdr.request_exit(run["agent_name"], run["pane_id"])
 
-    def _match_stop_event(self, run: dict) -> "dict | None":
-        """Scan the tail of events.jsonl for a Stop from this run: same cwd,
-        after the run started, session not claimed by another active run."""
+    def _assess_run(self, run: dict) -> dict:
+        """Read the tail of events.jsonl and let runmatch decide whether this run
+        has captured its session and/or finished. Session ids owned by other
+        active runs are off limits, so concurrent runs — or a human session in
+        the same folder — can't be cross-attributed."""
         started = _parse_iso(run.get("started_at"))
         if started is None:
-            return None
-        cutoff = started.timestamp() - 5
+            return {}
+        started_ts = started.timestamp()
         with self._lock:
-            claimed = {r.get("stop_session") for r in self._active if r is not run}
-        try:
-            with open(EVENTS_PATH, "rb") as f:
-                f.seek(0, 2)
-                f.seek(max(0, f.tell() - 262144))  # last 256KB is plenty of tail
-                tail = f.read().decode("utf-8", "replace")
-        except OSError:
-            return None
-        for line in reversed(tail.splitlines()):
-            try:
-                evt = json.loads(line)
-            except ValueError:
-                continue
-            if (evt.get("type") == "Stop" and evt.get("cwd") == run["cwd"]
-                    and (evt.get("ts") or 0) >= cutoff
-                    and evt.get("session_id") not in claimed):
-                run["stop_session"] = evt.get("session_id")
-                return evt
-        return None
+            claimed = {r.get("session_id") for r in self._active
+                       if r is not run and r.get("session_id")}
+        events = _read_events_tail(started_ts + runmatch.SESSION_START_EARLY)
+        return runmatch.assess(run["cwd"], started_ts, run.get("session_id"),
+                               events, claimed)
 
     def _finalize(self, run: dict, outcome: str, reason: "str | None" = None) -> None:
         text = herdr.transcript(run["pane_id"])  # best effort, before close
@@ -326,7 +372,6 @@ class Scheduler:
         run["outcome"] = outcome
         run["reason"] = reason
         run.pop("exit_deadline", None)
-        run.pop("stop_session", None)
         with self._lock:
             self._active = [r for r in self._active if r["id"] != run["id"]]
             self._history.insert(0, run)
@@ -352,6 +397,9 @@ class Scheduler:
 
     def _persist_active(self) -> None:
         store._atomic_write(ACTIVE_PATH, {"version": 1, "runs": self._active})
+
+    def _persist_queue(self) -> None:
+        store._atomic_write(QUEUE_PATH, {"version": 1, "runs": self._queue})
 
     # ---- public API (dashboard /api methods) --------------------------------
     def view(self) -> dict:
@@ -428,8 +476,10 @@ class Scheduler:
                           "prompt": prompt, "schedule": spec,
                           "timeout_minutes": timeout,
                           "workspace_id": workspace_id,
-                          # New slots save disabled — enabling is an explicit step.
-                          "enabled": False,
+                          # Enabling is an explicit step in the UI: the ⏱ form
+                          # never sends enabled for a new slot (toggle it in the
+                          # list), the workspace form has a checkbox. Honor it.
+                          "enabled": bool(slot.get("enabled")),
                           "last_fired_at": None, "created_at": _now_iso()}
                 self._slots.append(target)
             self._next_due[target["id"]] = (
@@ -451,6 +501,7 @@ class Scheduler:
             self._queue = [r for r in self._queue if r["slot_id"] != slot_id]
             self._next_due.pop(slot_id, None)
             self._persist_slots()
+            self._persist_queue()
         if gone and gone.get("workspace_id"):
             workspaces.set_slot_link(gone["workspace_id"], None)
         return self.view()
@@ -465,6 +516,7 @@ class Scheduler:
                     if slot["enabled"] else None)
                 if not slot["enabled"]:
                     self._queue = [r for r in self._queue if r["slot_id"] != slot_id]
+                    self._persist_queue()
                 self._persist_slots()
         return self.view()
 
@@ -473,6 +525,7 @@ class Scheduler:
             slot = next((s for s in self._slots if s["id"] == slot_id), None)
             if slot and not self._slot_busy(slot_id):
                 self._queue.append(self._run_record(slot, "manual"))
+                self._persist_queue()
         return self.view()
 
     def stop_run(self, run_id: str) -> dict:
@@ -480,13 +533,14 @@ class Scheduler:
             queued = next((r for r in self._queue if r["id"] == run_id), None)
             if queued:
                 self._queue.remove(queued)
+                self._persist_queue()
                 queued["state"] = None
                 queued["ended_at"] = _now_iso()
                 queued["outcome"] = "cancelled"
                 self._history.insert(0, queued)
                 self._persist_history()
-                return self.view()
-            run = next((r for r in self._active if r["id"] == run_id), None)
+            run = None if queued else next((r for r in self._active if r["id"] == run_id), None)
+        # view() takes the lock itself — never call it while holding it.
         if run:
             self._finalize(run, "cancelled", reason="stopped from the dashboard")
         return self.view()
