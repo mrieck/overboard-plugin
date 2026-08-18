@@ -15,9 +15,33 @@ The argument is the absolute path of a dispatch request file:
 ## 1. Read the request
 
 Read the JSON file at `$ARGUMENTS`. `message.text` is what the CTO sent;
-`response_path` is where your answer must go. Everything you need is in that
-file — do not go looking for chat credentials or history (there are none here
-by design).
+`response_path` is where your answer must go. `recent_tasks` (newest first)
+lists the tasks the app has run for the CTO lately — each with `task_id`,
+`name`, `project`, `status` ("queued", "working…", "finished", "failed",
+"cancelled", …), a `summary` of what it produced, its `artifacts` (paths) and
+`finished_at`. Everything you need is in that file — do not go looking for
+chat credentials or history (there are none here by design).
+
+## 1b. Decide what kind of message this is
+
+Four answers are possible; pick the first that fits:
+
+- **`follow_up`** — the message changes or extends something a recent task
+  produced ("make the video shorter", "the meme from before, add a caption",
+  "same post but for LinkedIn"). Name the task (`task_id` from
+  `recent_tasks`; match on name, project, artifacts or plain sense — the most
+  recent one when the message says "that"/"it") and write a single-paragraph
+  revision instruction as `task.prompt`. The app puts it straight into that
+  task's own Claude session, which still has its context — so describe the
+  change, not the whole job again. Never `follow_up` onto a task that is
+  still working unless the message clearly amends it; the app queues it
+  behind the run either way.
+- **`reply`** — a question the ledger already answers ("did the blog post
+  finish?", "where did the meme go?", "what's running?"): put a short plain
+  answer in `text`, drawn from `recent_tasks`. Nothing runs.
+- **`create_task`** — new work: continue with §2–§4 below.
+- **`reject`** — none of the above (a greeting, small talk, a question you
+  can't answer from the ledger, or an ambiguity described in §2).
 
 ## 2. Resolve where the task runs
 
@@ -82,8 +106,27 @@ Write this JSON — with your Write tool, to `response_path` **exactly**:
 }
 ```
 
+(`"version": 2` is fine too — the app reads both.) Don't add reporting
+instructions to the prompt: the app appends its own result contract (a
+`result.json` the worker writes) so it can show the CTO the summary and send
+the files.
+
 For a rejection: `"action": "reject"`, omit `project`/`task`, and put a
 one-line explanation in `"reason"`.
+
+For a follow-up:
+
+```json
+{
+  "version": 2,
+  "dispatch_id": "<dispatch_id from the request>",
+  "action": "follow_up",
+  "task_id": "<task_id from recent_tasks>",
+  "task": { "prompt": "<single-paragraph revision instruction — the change, with every detail from the message>" }
+}
+```
+
+For a direct answer: `{"version": 2, "dispatch_id": "…", "action": "reply", "text": "<one to three sentences>"}`.
 
 ## 5. Wake the app and stop
 
@@ -93,6 +136,7 @@ Run this via Bash so the Mac app picks the response up immediately:
 open -g "overboard://dispatch/wake"
 ```
 
-Then reply with one line saying what you dispatched (or why you rejected it)
-and **stop**. Do not start the task, do not loop, do not wait for the run —
-the app schedules it and reports back to the CTO's phone itself.
+Then reply with one line saying what you dispatched (or forwarded, answered,
+or why you rejected it) and **stop**. Do not start the task, do not loop, do
+not wait for the run — the app schedules it and reports back to the CTO's
+phone itself, with the task's `#id`, its result and the files it made.

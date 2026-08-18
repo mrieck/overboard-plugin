@@ -31,7 +31,10 @@ Prefer this vocabulary in code and copy: "CTO", "the team", "assistant",
    - `commands/dispatch.md`: the `/overboard:dispatch` command — the Mac app's
      Telegram dispatcher hands it a request-file path; the session resolves the
      target project via `list_projects`, writes a response JSON next to it, and
-     nudges the app with `open -g overboard://dispatch/wake`. It never executes
+     nudges the app with `open -g overboard://dispatch/wake`. The request also
+     carries `recent_tasks` (the app's task ledger), so the response may be
+     `create_task`, `follow_up` (continue a recent task with a revision
+     prompt), `reply` (answer from the ledger) or `reject`. It never executes
      the task itself and never sees chat credentials.
    - `skills/cto-assistant/SKILL.md`: the assistant's full playbook.
 2. **Dashboard** — `python3 -m overboard.app`: a stdlib `http.server` you view in
