@@ -10,7 +10,10 @@ payloads, a missed line) do we fall back to cwd + after-launch time.
 
 A Stop while a spawned subagent is still running is a turn boundary, not the
 run's end: Task/Agent PostToolUse fires at SPAWN, SubagentStop at finish, so
-`completed = SessionEnd or (Stop and pending_subagents <= 0)`.
+`completed = SessionEnd or (Stop and pending_subagents <= 0)` — where the Stop
+must land AFTER the last subagent event. A Stop that predates the SubagentStop
+is the same turn boundary: the parent gets a fresh turn when a background
+subagent reports back, and completing on that stale Stop would /exit it.
 
 Pure and deterministic; the scheduler feeds it the tail of the event log each
 poll (idempotent — re-reading the same events yields the same answer).
@@ -88,7 +91,10 @@ def assess(cwd: str, started_ts: float, session_id, events, claimed) -> dict:
     last_activity = None
     # Subagent launches minus finishes. May dip negative transiently for
     # foreground subagents (SubagentStop and the tool's PostToolUse land
-    # together, in either order); only the final tally matters.
+    # together, in either order); only the final tally matters. Every subagent
+    # event also forgets any Stop seen so far, so the SubagentStop that zeroes
+    # the tally can't complete the run on the strength of an earlier
+    # turn-boundary Stop while the parent is being re-invoked with the result.
     pending_subagents = 0
 
     for e in events:
@@ -106,8 +112,10 @@ def assess(cwd: str, started_ts: float, session_id, events, claimed) -> dict:
         elif typ == "PostToolUse":
             if e.get("tool_name") in _SUBAGENT_TOOLS:
                 pending_subagents += 1
+                stop_seen = False
         elif typ == "SubagentStop":
             pending_subagents -= 1
+            stop_seen = False
         elif typ != "SessionStart":
             continue
         last_activity = ts if last_activity is None else max(last_activity, ts)

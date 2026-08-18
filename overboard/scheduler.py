@@ -310,34 +310,60 @@ class Scheduler:
             herdr.terminate(run["pane_id"])
             return self._finalize(run, "timeout",
                                   reason=f"exceeded {run.get('timeout_minutes')} minutes")
-        # An /exit was requested; give it a moment, then close the pane ourselves.
-        deadline = _parse_iso(run.get("exit_deadline"))
-        if deadline and now > deadline:
-            herdr.terminate(run["pane_id"])
-            return self._finalize(run, "completed")
-
         probe = herdr.probe(run["pane_id"])
         if not probe["alive"]:
-            outcome = "completed" if (run.get("completion_message") is not None
+            outcome = "completed" if (run.get("state") == "exiting"
+                                      or run.get("completion_message") is not None
                                       or run.get("exit_deadline")) else "exited"
             return self._finalize(run, outcome)
         run["herdr_state"] = probe["state"]
 
-        if run.get("exit_deadline"):
-            return  # already winding down
         verdict = self._assess_run(run)
         if verdict.get("captured"):
             run["session_id"] = verdict["session_id"]
             with self._lock:
                 self._persist_active()
         if verdict.get("completed"):
+            # The closing message follows the latest terminating Stop.
             run["completion_message"] = verdict.get("completion_message")
-            run["state"] = "exiting"
-            run["exit_deadline"] = (now + timedelta(seconds=EXIT_GRACE_SECS)).isoformat(
-                timespec="seconds")
+            if run.get("state") != "exiting":
+                run["state"] = "exiting"
+                with self._lock:
+                    self._persist_active()
+        elif run.get("state") == "exiting" and not run.get("exit_deadline"):
+            # A subagent event arrived after the Stop we acted on and no /exit
+            # is out yet: the run is mid-flight again, not finishing.
+            run["state"] = "running"
             with self._lock:
                 self._persist_active()
-            herdr.request_exit(run["agent_name"], run["pane_id"])
+        if run.get("state") == "exiting":
+            self._wind_down(run, probe["state"], now)
+
+    def _wind_down(self, run: dict, state: str, now: datetime) -> None:
+        """A completion has been seen. `/exit` goes in only when herdr shows
+        the agent at rest: hook events run ahead of the session (a Stop lands,
+        then the agent is re-invoked by a background task or a subagent
+        reporting back), and `/exit` typed into a working session is eaten or
+        queued behind the turn — after which a fixed deadline closed the pane
+        on live work. Seeing it working/blocked cancels any pending force-close;
+        the exit is re-asked once it settles again."""
+        if state in ("working", "blocked"):
+            if run.pop("exit_deadline", None) is not None:
+                with self._lock:
+                    self._persist_active()
+            return
+        deadline = _parse_iso(run.get("exit_deadline"))
+        if deadline is not None:
+            if now > deadline:
+                # Asked it to exit and it didn't — close the pane ourselves.
+                herdr.terminate(run["pane_id"])
+                self._finalize(run, "completed")
+            return
+        run["exit_deadline"] = (now + timedelta(seconds=EXIT_GRACE_SECS)).isoformat(
+            timespec="seconds")
+        with self._lock:
+            self._persist_active()
+        herdr.request_exit(run["agent_name"], run["pane_id"])
 
     def _assess_run(self, run: dict) -> dict:
         """Read the tail of events.jsonl and let runmatch decide whether this run

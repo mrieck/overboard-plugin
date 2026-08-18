@@ -79,6 +79,26 @@ class CompletionTests(unittest.TestCase):
         self.assertTrue(v["completed"])
         self.assertEqual(v["completion_message"], "really done")
 
+    def test_stale_stop_before_subagent_stop_does_not_complete(self):
+        # The SubagentStop that zeroes the tally must not complete the run on
+        # the strength of the earlier turn-boundary Stop — the wrapper is being
+        # re-invoked with the result right then. Only a Stop AFTER the last
+        # subagent event counts.
+        events = [ev("SessionStart", T0 + 2),
+                  ev("PostToolUse", T0 + 10, tool_name="Agent"),
+                  ev("Stop", T0 + 20, last_message="waiting on the agent"),
+                  ev("SubagentStop", T0 + 600)]
+        self.assertFalse(runmatch.assess(CWD, T0, None, events, set())["completed"])
+        # A second background agent from the follow-up turn resets it again
+        # (its PostToolUse may even log after the Stop; order in the log rules).
+        events += [ev("Stop", T0 + 610, last_message="second turn"),
+                   ev("PostToolUse", T0 + 605, tool_name="Task")]
+        self.assertFalse(runmatch.assess(CWD, T0, None, events, set())["completed"])
+        events += [ev("SubagentStop", T0 + 900), ev("Stop", T0 + 960, last_message="all collected")]
+        v = runmatch.assess(CWD, T0, None, events, set())
+        self.assertTrue(v["completed"])
+        self.assertEqual(v["completion_message"], "all collected")
+
     def test_foreground_subagent_order_does_not_matter(self):
         events = [ev("SessionStart", T0 + 2),
                   ev("SubagentStop", T0 + 10),
