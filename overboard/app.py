@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -571,6 +572,50 @@ class Api:
         self._kick_analyses()
         self._kick_sync()
         self._kick_event_compact()
+
+    # ---- auto refresh ---------------------------------------------------
+    # How stale `last_refresh` may get before the server refreshes on its own.
+    # The web UI refreshes on page load, but a headless server (the Mac app's
+    # service) has no page load — without this, repo discovery and commit
+    # fetching only ever ran when someone clicked Refresh, so clones created
+    # after the last click never reached the board.
+    AUTO_REFRESH_MINUTES = 30
+    _auto_refresh_started = False
+
+    def start_auto_refresh(self, interval_minutes: int | None = None) -> None:
+        """Spawn the periodic refresh thread. Call once, post-bind — only the
+        process that owns the port may write state (a "port taken" Api must
+        never double-fire)."""
+        if self._auto_refresh_started:
+            return
+        self._auto_refresh_started = True
+        minutes = interval_minutes or self.AUTO_REFRESH_MINUTES
+        threading.Thread(target=self._auto_refresh_loop, args=(minutes,),
+                         daemon=True, name="overboard-auto-refresh").start()
+
+    def _refresh_is_stale(self, minutes: int) -> bool:
+        raw = self.state.get("last_refresh")
+        if not raw:
+            return True
+        try:
+            last = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - last >= timedelta(minutes=minutes)
+
+    def _auto_refresh_loop(self, minutes: int) -> None:
+        # Small head start so startup analysis/sync get going first.
+        time.sleep(5)
+        while True:
+            try:
+                if self.sources and not self._refreshing and self._refresh_is_stale(minutes):
+                    debuglog.log(f"auto-refresh: last_refresh older than {minutes} min — refreshing")
+                    self.refresh()
+            except Exception as e:  # the loop must outlive any one bad pass
+                debuglog.log(f"auto-refresh: failed — {e}")
+            time.sleep(60)
 
     # ---- read -----------------------------------------------------------
     def get_view(self) -> dict:
@@ -1377,8 +1422,10 @@ def run_dashboard(config: dict, port: int, prefer_window: bool,
         return 0
 
     # The bind succeeded, so this is the one dashboard process — safe to start
-    # the scheduler's tick thread (slots fire from here; see overboard/scheduler.py).
+    # the scheduler's tick thread (slots fire from here; see overboard/scheduler.py)
+    # and the periodic refresh.
     api.scheduler.start()
+    api.start_auto_refresh()
 
     if prefer_window:
         try:
