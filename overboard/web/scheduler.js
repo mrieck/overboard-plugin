@@ -1,52 +1,105 @@
 "use strict";
 
 // ---- scheduler panel (slots that fire unattended claude runs via herdr) -----
-// Opened from the ⏱ header button. Uses app.js globals: call(), el(), ago().
-// List mode re-renders on a 5s poll; while the slot form is open the poll
-// keeps fetching but never re-renders, so typing is never clobbered.
+// A full-width panel picked from the strip (#/scheduler), laid out like the
+// Mac app's SchedulerView:
+//
+//   ┌ dispatcher ───┐┌ Agents | History ──────┐┌ editor / run detail ─┐
+//   │ (dispatch.js) ││ slot rows · queue &     ││ permanent slot editor │
+//   ├ agenda ───────┤│ active · history        ││ or the picked run     │
+//   │ next 10 days  ││                         ││                       │
+//   └───────────────┘└─────────────────────────┘└───────────────────────┘
+//
+// Each column is its own renderer over its own host node. The 5s poll always
+// re-renders the left and middle columns; the right column is rebuilt only
+// when the selection changes (or the picked run's record moved), so typing in
+// the editor is never clobbered. Uses app.js globals: call(), el(), note(),
+// ago(), escapeHtml(); slot_editor.js and run_detail.js build the right pane.
 
-let SCHED = null;        // latest scheduler_view payload
-let SCHED_EDIT = null;   // slot object being edited, {} for a new one, null = list mode
+let SCHED = null;                       // latest scheduler_view payload
+let SCHED_SEL = { kind: "new", id: null };  // what the right column shows
+let SCHED_TAB = "agents";               // agents | history
+let SCHED_SHOW_HIDDEN = false;
 let _schedTimer = null;
-let _schedPreviewTimer = null;
+let _schedRightKey = null;              // what the right column currently renders
 
-async function openScheduler() {
-  SCHED_EDIT = null;
-  SCHED = await call("scheduler_view");
-  renderScheduler();
-  _schedTimer = setInterval(async () => {
-    try {
-      const v = await call("scheduler_view");
-      if (v && !v.error) {
-        SCHED = v;
-        if (!SCHED_EDIT) renderScheduler();
-      }
-    } catch (_) { /* transient poll errors are fine */ }
-  }, 5000);
+function _schedVisible() { return currentPanel() === "scheduler"; }
+
+async function startScheduler(arg) {
+  _schedApplyArg(arg);
+  renderSchedulerPanel();
+  await schedRefresh();
+  if (_schedTimer) clearInterval(_schedTimer);
+  _schedTimer = setInterval(schedRefresh, 5000);
 }
-
-function closeScheduler() {
-  const m = document.getElementById("scheduler-modal");
-  if (m) m.remove();
-  document.removeEventListener("keydown", _schedEsc);
+function stopScheduler() {
   if (_schedTimer) { clearInterval(_schedTimer); _schedTimer = null; }
-  SCHED_EDIT = null;
 }
-function _schedEsc(e) {
-  if (e.key !== "Escape") return;
-  if (SCHED_EDIT) { SCHED_EDIT = null; renderScheduler(); }
-  else closeScheduler();
+// #/scheduler/run/<id> picks that run (and the History tab);
+// #/scheduler/slot/<id> opens that agent in the editor.
+function _schedApplyArg(arg) {
+  if (!arg || !arg.id) return;
+  if (arg.kind === "slot") { SCHED_SEL = { kind: "slot", id: arg.id }; return; }
+  SCHED_SEL = { kind: "run", id: arg.id }; SCHED_TAB = "history";
+}
+function _schedArg(arg) { _schedApplyArg(arg); renderSchedulerPanel(); }
+// Esc backs out of the run detail / an edit to the blank editor.
+function _schedEscape() {
+  if (SCHED_SEL.kind !== "new") schedSelect({ kind: "new", id: null });
+}
+registerPanel("scheduler", { start: startScheduler, stop: stopScheduler,
+                             arg: _schedArg, escape: _schedEscape });
+
+async function schedRefresh() {
+  try {
+    const v = await call("scheduler_view");
+    if (v && !v.error) {
+      SCHED = v;
+      if (typeof renderStrip === "function") renderStrip();
+      if (typeof dispatchPoll === "function" && _schedVisible()) dispatchPoll();
+      renderSchedulerPanel();
+    } else if (v && v.error && !SCHED) {
+      SCHED = v;
+      renderSchedulerPanel();
+    }
+  } catch (_) { /* transient poll errors are fine */ }
 }
 
 // A scheduler_view /api call that re-renders; shows err inline on failure.
 async function schedCall(method, args) {
-  const v = await call(method, args);
-  if (v && !v.error) { SCHED = v; renderScheduler(); return true; }
-  const status = document.getElementById("sched-status");
-  if (status) status.textContent = (v && v.error) || "call failed";
+  let v;
+  try { v = await call(method, args); } catch (e) { v = { error: String(e) }; }
+  if (v && !v.error) {
+    SCHED = v;
+    if (typeof renderStrip === "function") renderStrip();
+    renderSchedulerPanel();
+    return true;
+  }
+  schedStatus((v && v.error) || "call failed", true);
   return false;
 }
+function schedStatus(text, isErr) {
+  const s = document.getElementById("sched-status");
+  if (!s) return;
+  s.textContent = text || "";
+  s.classList.toggle("sched-err", !!isErr);
+}
 
+// Select what the right column shows; keeps the URL shareable for runs.
+function schedSelect(sel) {
+  SCHED_SEL = sel;
+  if (sel.kind === "run") {
+    SCHED_TAB = "history";
+    history.replaceState(null, "", "#/scheduler/run/" + encodeURIComponent(sel.id));
+  } else if (sel.kind === "slot") {
+    history.replaceState(null, "", "#/scheduler/slot/" + encodeURIComponent(sel.id));
+  } else if (location.hash.startsWith("#/scheduler/")) {
+    history.replaceState(null, "", "#/scheduler");
+  }
+  renderSchedulerPanel();
+}
+
+// ---- small formatters -------------------------------------------------------
 function schedWhen(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -62,313 +115,424 @@ function schedDuration(a, b) {
   const s = Math.max(0, (new Date(b) - new Date(a)) / 1000);
   if (isNaN(s)) return "";
   if (s < 90) return `${Math.round(s)}s`;
-  if (s < 5400) return `${Math.round(s / 60)}m`;
-  return `${(s / 3600).toFixed(1)}h`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+  return `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`;
+}
+function schedClock(d) {
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+function schedDateTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return iso || "";
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })
+    + ", " + schedClock(d);
 }
 function tildify(p) {
-  return (SCHED && p) ? p.replace(/^\/(?:home|Users)\/[^/]+/, "~") : p || "";
+  return p ? p.replace(/^\/(?:home|Users)\/[^/]+/, "~") : "";
+}
+function baseName(p) {
+  return (p || "").replace(/\/+$/, "").split("/").pop() || p || "";
 }
 
-function renderScheduler() {
-  closeSchedulerDom();
-  const ov = el("div", "modal-overlay");
-  ov.id = "scheduler-modal";
-  ov.addEventListener("click", (e) => { if (e.target === ov) closeScheduler(); });
-  const box = el("div", "modal modal-scheduler");
+// Outcome → glyph + label (RunHistoryRow.swift).
+// Plain glyphs (not emoji) so they render with the UI font everywhere.
+const SCHED_OUTCOMES = {
+  completed: ["✓", "completed", "ok"],
+  cancelled: ["■", "cancelled", "muted"],
+  skipped_missed_window: ["↷", "missed its window", "muted"],
+  timeout: ["◔", "timed out", "bad"],
+  launch_failed: ["✕", "failed to launch", "bad"],
+  exited: ["✕", "exited without finishing", "bad"],
+};
+function outcomeInfo(run) {
+  return SCHED_OUTCOMES[run.outcome] || ["•", (run.outcome || "unknown").replace(/_/g, " "), "muted"];
+}
+// Live state → label + tone (blocked = waiting for the CTO).
+function runStateInfo(run) {
+  if (run.state === "queued") return ["queued", "muted"];
+  if (run.state === "launching") return ["starting", "live"];
+  if (run.state === "exiting") return ["finishing", "live"];
+  if (run.taken_over) return ["you have control", "warn"];
+  const h = run.herdr_state;
+  if (run.waiting_since || h === "blocked") return ["waiting for input", "warn"];
+  if (h === "working") return ["working", "live"];
+  if (h === "idle") return ["idle", "muted"];
+  if (h === "done") return ["done", "ok"];
+  if (run.stalled_at) return ["stalled", "warn"];
+  return ["running", "live"];
+}
+function isRunFailure(run) {
+  return ["timeout", "launch_failed", "exited"].includes(run.outcome);
+}
 
-  const head = el("div", "modal-head");
-  head.appendChild(el("h3", null, SCHED_EDIT
-    ? (SCHED_EDIT.id ? "Edit slot" : "New slot") : "Scheduler"));
-  const close = el("button", "btn ghost small", "Close");
-  close.addEventListener("click", closeScheduler);
-  head.appendChild(close);
-  box.appendChild(head);
+// ---- panel shell ------------------------------------------------------------
+function _schedShell() {
+  const host = document.getElementById("panel-scheduler");
+  if (!host) return null;
+  if (host.querySelector(".sched-cols")) return host;
+  host.textContent = "";
+  host.innerHTML =
+    '<div class="sched-wrap">' +
+      '<div id="sched-notice"></div>' +
+      '<div class="sched-cols">' +
+        '<div class="sched-left"><div id="sched-dispatch" class="sched-dispatch"></div>' +
+          '<div id="sched-agenda" class="sched-agenda"></div></div>' +
+        '<div class="sched-mid"><div id="sched-mid-head" class="sched-mid-head"></div>' +
+          '<div id="sched-mid-body" class="sched-mid-body"></div></div>' +
+        '<div id="sched-right" class="sched-right"></div>' +
+      '</div>' +
+    '</div>';
+  _schedRightKey = null;
+  return host;
+}
 
-  const body = el("div", "settings-body");
-  if (SCHED && SCHED.error) {
-    body.appendChild(note("Scheduler unavailable: " + SCHED.error));
-  } else if (SCHED_EDIT) {
-    body.appendChild(schedForm());
-  } else {
-    schedList(body);
+function renderSchedulerPanel() {
+  const host = _schedShell();
+  if (!host || !_schedVisible()) return;
+  renderSchedNotice();
+  if (typeof renderDispatchPane === "function") renderDispatchPane();
+  else document.getElementById("sched-dispatch").hidden = true;
+  renderAgenda();
+  renderMidHead();
+  renderMidBody();
+  renderRight();
+}
+
+function renderSchedNotice() {
+  const out = document.getElementById("sched-notice");
+  out.textContent = "";
+  if (!SCHED) return;
+  if (SCHED.error) {
+    out.appendChild(el("p", "sched-banner", "Scheduler unavailable: " + SCHED.error));
+    return;
   }
-  box.appendChild(body);
-  ov.appendChild(box);
-  document.body.appendChild(ov);
-  document.addEventListener("keydown", _schedEsc);
-}
-function closeSchedulerDom() {
-  const m = document.getElementById("scheduler-modal");
-  if (m) m.remove();
-  document.removeEventListener("keydown", _schedEsc);
-}
-
-// ---- list mode --------------------------------------------------------------
-function schedList(body) {
-  const h = SCHED && SCHED.herdr;
+  const h = SCHED.herdr;
   if (h && (!h.installed || !h.reachable)) {
     const warn = el("p", "sched-banner");
     warn.textContent = !h.installed
-      ? "Herdr is required for scheduled runs — install it from herdr.dev."
+      ? "Herdr is required for scheduled runs — install it from herdr.dev. Slots can be set up now; runs start once it's there."
       : `Herdr is installed but its server isn't reachable (${h.socket}). It will be started on the next run.`;
-    body.appendChild(warn);
+    out.appendChild(warn);
   }
+}
 
-  const slots = (SCHED && SCHED.slots) || [];
-  const fs = el("fieldset", "src");
-  const legend = el("legend", null, "Slots");
-  fs.appendChild(legend);
+// ---- left: agenda (SchedulerCalendarView) ----------------------------------
+function renderAgenda() {
+  const out = document.getElementById("sched-agenda");
+  out.textContent = "";
+  const days = (SCHED && SCHED.agenda_days) || 10;
+  const head = el("div", "sec-head");
+  head.appendChild(el("span", "sec-label", `NEXT ${days} DAYS`));
+  out.appendChild(head);
+  if (!SCHED || SCHED.error) return;
+
+  // Bucket every enabled slot's upcoming fires by local calendar day.
+  const entries = [];
+  for (const slot of SCHED.slots || []) {
+    if (!slot.enabled) continue;
+    for (const iso of slot.upcoming || []) {
+      const d = new Date(iso);
+      if (!isNaN(d)) entries.push({ at: d, slot });
+    }
+  }
+  entries.sort((a, b) => a.at - b.at || a.slot.name.localeCompare(b.slot.name));
+  const byDay = new Map();
+  for (const e of entries) {
+    const key = e.at.toDateString();
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(e);
+  }
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const list = el("div", "agenda-list");
+  let anything = false;
+  for (let i = 0; i < days; i++) {
+    const day = new Date(today); day.setDate(today.getDate() + i);
+    const rows = byDay.get(day.toDateString()) || [];
+    const dayEl = el("div", "agenda-day");
+    const dh = el("div", "agenda-day-head");
+    const prefix = i === 0 ? "TODAY" : i === 1 ? "TOMORROW" : "";
+    const label = day.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    dh.appendChild(el("span", "agenda-day-name", (prefix ? prefix + " · " : "") + label));
+    if (rows.length) dh.appendChild(el("span", "count-chip", String(rows.length)));
+    dayEl.appendChild(dh);
+    if (!rows.length) {
+      dayEl.appendChild(el("div", "agenda-quiet", "nothing scheduled"));
+    }
+    for (const r of rows) {
+      anything = true;
+      const row = el("div", "agenda-row");
+      if (SCHED_SEL.kind === "slot" && SCHED_SEL.id === r.slot.id) row.classList.add("row-sel");
+      row.appendChild(el("span", "agenda-time", schedClock(r.at)));
+      row.appendChild(el("span", "agenda-glyph",
+        (r.slot.schedule || {}).kind === "once" ? "①" : "⟳"));
+      row.appendChild(el("span", "agenda-name", r.slot.name));
+      row.title = `${r.slot.name} · ${r.slot.summary || ""}\n${tildify(r.slot.cwd)}`;
+      row.addEventListener("click", () => schedSelect({ kind: "slot", id: r.slot.id }));
+      dayEl.appendChild(row);
+    }
+    list.appendChild(dayEl);
+  }
+  out.appendChild(list);
+  if (!anything && !(SCHED.slots || []).some((s) => s.enabled)) {
+    out.appendChild(note("No enabled agents. Turn one on and its runs show up here."));
+  }
+}
+
+// ---- middle: header + tabs ---------------------------------------------------
+function renderMidHead() {
+  const out = document.getElementById("sched-mid-head");
+  out.textContent = "";
+  const top = el("div", "sched-mid-top");
+  top.appendChild(el("h2", null, "Scheduler"));
+  const cap = SCHED && !SCHED.error ? SCHED.concurrency : null;
+  if (cap) {
+    const c = el("span", "subtle sched-cap", `${cap} concurrent`);
+    c.title = "Concurrent runs — change in Settings ▸ Misc";
+    top.appendChild(c);
+  }
+  const add = el("button", "btn small", "New agent");
+  add.addEventListener("click", () => schedSelect({ kind: "new", id: null }));
+  top.appendChild(add);
+  out.appendChild(top);
+
+  const tabs = el("div", "sched-tabs");
+  const live = SCHED && !SCHED.error ? (SCHED.active || []).length + (SCHED.queued || []).length : 0;
+  for (const [key, label] of [["agents", "Agents"], ["history", "History"]]) {
+    const b = el("button", "sched-tab" + (SCHED_TAB === key ? " on" : ""), label);
+    if (key === "history" && live) b.appendChild(el("span", "tab-n", String(live)));
+    b.addEventListener("click", () => { SCHED_TAB = key; renderMidBody(); renderMidHead(); });
+    tabs.appendChild(b);
+  }
+  out.appendChild(tabs);
+}
+
+function renderMidBody() {
+  const out = document.getElementById("sched-mid-body");
+  out.textContent = "";
+  if (!SCHED) { out.appendChild(note("Loading…")); return; }
+  if (SCHED.error) return;
+  if (SCHED_TAB === "agents") renderAgents(out);
+  else { renderQueue(out); renderHistory(out); }
+  const status = el("p", "subtle sched-status"); status.id = "sched-status";
+  out.appendChild(status);
+}
+
+// ---- middle: agents (slot rows) ---------------------------------------------
+function renderAgents(out) {
+  const slots = SCHED.slots || [];
   if (!slots.length) {
-    fs.appendChild(note("No slots yet — schedule a recurring claude run below."));
+    out.appendChild(note("No agents yet. Set one up on the right — a folder, a prompt, a schedule."));
+    return;
   }
+  const list = el("div", "slot-list");
   for (const slot of slots) {
-    const row = el("div", "sched-slot");
-    const top = el("div", "sched-slot-top");
-    const enable = document.createElement("input");
-    enable.type = "checkbox";
-    enable.checked = !!slot.enabled;
-    enable.title = "Enable / disable";
-    enable.addEventListener("change", () =>
-      schedCall("toggle_slot", { slot_id: slot.id, enabled: enable.checked }));
-    top.appendChild(enable);
-    top.appendChild(el("span", "sched-slot-name", slot.name));
-    if (slot.workspace_id) top.appendChild(el("span", "plug-ws-tag", "↳ workspace"));
-    top.appendChild(el("span", "subtle", slot.summary || ""));
-    const btns = el("span", "sched-slot-btns");
-    const run = el("button", "btn ghost small", "Run now");
-    run.addEventListener("click", () => schedCall("run_slot_now", { slot_id: slot.id }));
-    const edit = el("button", "btn ghost small", "Edit");
-    edit.addEventListener("click", () => { SCHED_EDIT = { ...slot }; renderScheduler(); });
-    const del = el("button", "btn ghost small", "✕");
-    del.title = "Delete slot";
-    del.addEventListener("click", () => {
-      if (confirm(`Delete slot “${slot.name}”?`)) schedCall("delete_slot", { slot_id: slot.id });
-    });
-    btns.appendChild(run); btns.appendChild(edit); btns.appendChild(del);
-    top.appendChild(btns);
-    row.appendChild(top);
-    const sub = el("div", "subtle sched-slot-sub",
+    const row = el("div", "slot-row");
+    if (SCHED_SEL.kind === "slot" && SCHED_SEL.id === slot.id) row.classList.add("row-sel");
+    const main = el("div", "slot-main");
+    const top = el("div", "slot-top");
+    top.appendChild(el("span", "slot-name", slot.name));
+    if (slot.workspace_id) top.appendChild(el("span", "plug-ws-tag", "workspace"));
+    if ((slot.schedule || {}).kind === "once" && !slot.enabled && slot.last_fired_at) {
+      top.appendChild(el("span", "plug-ws-tag", "ran"));
+    }
+    main.appendChild(top);
+    const cmd = (slot.prompt || "").replace(/\s+/g, " ");
+    const sub = el("div", "slot-sub mono",
+      (cmd.length > 70 ? cmd.slice(0, 70) + "…" : cmd) + "  ·  " + (slot.summary || ""));
+    main.appendChild(sub);
+    const meta = el("div", "slot-meta subtle",
       tildify(slot.cwd) + (slot.enabled && slot.next_fire
-        ? `  ·  next ${schedWhen(slot.next_fire)}` : slot.enabled ? "" : "  ·  disabled"));
-    row.appendChild(sub);
-    fs.appendChild(row);
-  }
-  const add = el("button", "btn small", "+ Add slot");
-  add.addEventListener("click", () => { SCHED_EDIT = {}; renderScheduler(); });
-  const addWrap = el("p", null); addWrap.appendChild(add);
-  fs.appendChild(addWrap);
-  body.appendChild(fs);
+        ? `  ·  next ${schedWhen(slot.next_fire)}` : slot.enabled ? "" : "  ·  off"));
+    main.appendChild(meta);
+    main.addEventListener("click", () => schedSelect({ kind: "slot", id: slot.id }));
+    row.appendChild(main);
 
-  const running = [...((SCHED && SCHED.active) || []), ...((SCHED && SCHED.queued) || [])];
-  if (running.length) {
-    const afs = el("fieldset", "src");
-    afs.appendChild(el("legend", null, "Running"));
-    for (const r of running) {
-      const row = el("div", "sched-run");
-      const state = r.state === "running" ? (r.herdr_state || "running") : r.state;
-      row.appendChild(el("span", `sched-chip sched-${state}`, state));
-      row.appendChild(el("span", "sched-slot-name", r.slot_name));
-      row.appendChild(el("span", "subtle", "started " + schedDuration(r.started_at, Date.now()) + " ago"));
-      if (state === "blocked") {
-        row.appendChild(el("span", "subtle", "waiting for input — take it over in herdr"));
-      }
-      const stop = el("button", "btn ghost small", "Stop");
-      stop.addEventListener("click", () => schedCall("stop_run", { run_id: r.id }));
-      row.appendChild(stop);
-      afs.appendChild(row);
-    }
-    body.appendChild(afs);
-  }
-
-  const history = (SCHED && SCHED.history) || [];
-  if (history.length) {
-    const hfs = el("fieldset", "src");
-    hfs.appendChild(el("legend", null, "History"));
-    for (const r of history.slice(0, 25)) {
-      const row = el("div", "sched-run");
-      row.appendChild(el("span", `sched-chip sched-${r.outcome}`, (r.outcome || "?").replace(/_/g, " ")));
-      row.appendChild(el("span", "sched-slot-name", r.slot_name));
-      const bits = [schedWhen(r.started_at).replace(/^in .* · /, ""),
-                    r.ended_at ? schedDuration(r.started_at, r.ended_at) : ""]
-        .filter(Boolean).join(" · ");
-      row.appendChild(el("span", "subtle", bits));
-      if (r.reason) row.appendChild(el("span", "subtle", r.reason));
-      if (r.has_transcript) {
-        const t = el("button", "btn ghost small", "Transcript");
-        t.addEventListener("click", () => openSchedTranscript(r));
-        row.appendChild(t);
-      }
-      hfs.appendChild(row);
-    }
-    body.appendChild(hfs);
-  }
-  body.appendChild(el("p", "subtle hint", "Slots fire only while the dashboard server is running."));
-  const status = el("p", "subtle"); status.id = "sched-status";
-  body.appendChild(status);
-}
-
-async function openSchedTranscript(run) {
-  const res = await call("get_run_transcript", { run_id: run.id });
-  const ov = el("div", "modal-overlay");
-  ov.id = "sched-transcript-modal";
-  ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
-  const box = el("div", "modal modal-scheduler");
-  const head = el("div", "modal-head");
-  head.appendChild(el("h3", null, `Transcript · ${run.slot_name}`));
-  const close = el("button", "btn ghost small", "Close");
-  close.addEventListener("click", () => ov.remove());
-  head.appendChild(close);
-  box.appendChild(head);
-  const pre = el("pre", "sched-transcript");
-  pre.textContent = (res && res.text) || "Transcript unavailable.";
-  box.appendChild(pre);
-  ov.appendChild(box);
-  document.body.appendChild(ov);
-}
-
-// ---- slot form --------------------------------------------------------------
-function schedForm() {
-  const s = SCHED_EDIT;
-  const spec = s.schedule || { kind: "daily" };
-  const wrap = el("div", null);
-  const dl = ((SCHED && SCHED.known_paths) || [])
-    .map((p) => `<option value="${p.replace(/"/g, "&quot;")}"></option>`).join("");
-  wrap.innerHTML =
-    '<fieldset class="src">' +
-      '<label>Name <input type="text" id="sl-name" placeholder="Nightly triage"></label>' +
-      '<label>Working directory <input type="text" id="sl-cwd" list="sl-paths" placeholder="/home/you/project"></label>' +
-      `<datalist id="sl-paths">${dl}</datalist>` +
-      '<label>Prompt <textarea id="sl-prompt" rows="4" placeholder="What should claude do each run?"></textarea></label>' +
-      '<label>Timeout (minutes) <input type="number" id="sl-timeout" min="5" max="1440"></label>' +
-    '</fieldset>' +
-    '<fieldset class="src"><legend>Schedule</legend>' +
-      '<label>Repeats <select id="sl-kind">' +
-        '<option value="daily">Daily</option>' +
-        '<option value="weekly">Weekly</option>' +
-        '<option value="everyHours">Every N hours</option>' +
-      '</select></label>' +
-      '<div id="sl-times-row"><label>Times <input type="text" id="sl-times" placeholder="02:00, 14:30"></label></div>' +
-      '<div id="sl-days-row"><label>Days</label><div id="sl-days" class="sched-days"></div></div>' +
-      '<div id="sl-hours-row">' +
-        '<label>Every <input type="number" id="sl-interval" min="1" max="24" value="2"> hours</label>' +
-        '<label><input type="checkbox" id="sl-window-on"> Only between ' +
-          '<input type="number" id="sl-win-start" min="0" max="23" value="9">:00 and ' +
-          '<input type="number" id="sl-win-end" min="1" max="24" value="18">:00</label>' +
-      '</div>' +
-      '<p id="sl-preview" class="subtle hint"></p>' +
-    '</fieldset>' +
-    '<div class="settings-actions"><span id="sched-status" class="subtle"></span>' +
-      '<button class="btn ghost small" data-cancel>Cancel</button>' +
-      '<button class="btn" data-save>Save slot</button></div>';
-
-  wrap.querySelector("#sl-name").value = s.name || "";
-  wrap.querySelector("#sl-cwd").value = s.cwd || "";
-  wrap.querySelector("#sl-prompt").value = s.prompt || "";
-  wrap.querySelector("#sl-timeout").value = s.timeout_minutes || 90;
-  wrap.querySelector("#sl-kind").value = spec.kind || "daily";
-  wrap.querySelector("#sl-times").value = (spec.times || [{ hour: 2, minute: 0 }])
-    .map((t) => `${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`)
-    .join(", ");
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const daysHost = wrap.querySelector("#sl-days");
-  const chosen = new Set(spec.days || []);
-  dayNames.forEach((nm, i) => {
-    const lab = el("label", "sched-day");
+    const side = el("div", "slot-side");
+    const sw = el("label", "switch");
+    sw.title = slot.enabled ? "Enabled — click to turn off" : "Off — click to enable";
     const cb = document.createElement("input");
-    cb.type = "checkbox"; cb.dataset.day = String(i + 1); cb.checked = chosen.has(i + 1);
-    cb.addEventListener("change", schedPreview);
-    lab.appendChild(cb); lab.appendChild(document.createTextNode(nm));
-    daysHost.appendChild(lab);
-  });
-  if (spec.kind === "everyHours") {
-    wrap.querySelector("#sl-interval").value = spec.interval || 2;
-    if (spec.window) {
-      wrap.querySelector("#sl-window-on").checked = true;
-      wrap.querySelector("#sl-win-start").value = spec.window.startHour;
-      wrap.querySelector("#sl-win-end").value = spec.window.endHour;
-    }
+    cb.type = "checkbox"; cb.checked = !!slot.enabled;
+    cb.addEventListener("change", async () => {
+      const ok = await schedCall("toggle_slot", { slot_id: slot.id, enabled: cb.checked });
+      if (!ok) cb.checked = !cb.checked;
+      else slotEditorSync(slot.id);
+    });
+    sw.appendChild(cb); sw.appendChild(el("span", "switch-track"));
+    side.appendChild(sw);
+    const acts = el("div", "slot-acts");
+    const run = el("button", "btn ghost small", "Run now");
+    run.title = "Queue a run right now";
+    run.addEventListener("click", () => schedCall("run_slot_now", { slot_id: slot.id }));
+    const del = el("button", "btn ghost small danger", "✕");
+    del.title = "Delete agent";
+    del.addEventListener("click", async () => {
+      if (!confirm(`Delete “${slot.name}”?`)) return;
+      if (await schedCall("delete_slot", { slot_id: slot.id })
+          && SCHED_SEL.kind === "slot" && SCHED_SEL.id === slot.id) {
+        schedSelect({ kind: "new", id: null });
+      }
+    });
+    acts.appendChild(run); acts.appendChild(del);
+    side.appendChild(acts);
+    row.appendChild(side);
+    list.appendChild(row);
   }
-
-  const syncKind = () => {
-    const kind = wrap.querySelector("#sl-kind").value;
-    wrap.querySelector("#sl-times-row").style.display = kind === "everyHours" ? "none" : "";
-    wrap.querySelector("#sl-days-row").style.display = kind === "weekly" ? "" : "none";
-    wrap.querySelector("#sl-hours-row").style.display = kind === "everyHours" ? "" : "none";
-    schedPreview();
-  };
-  wrap.querySelector("#sl-kind").addEventListener("change", syncKind);
-  for (const id of ["sl-times", "sl-interval", "sl-window-on", "sl-win-start", "sl-win-end"]) {
-    wrap.querySelector("#" + id).addEventListener("input", schedPreview);
-  }
-  wrap.querySelector("[data-cancel]").addEventListener("click", () => {
-    SCHED_EDIT = null; renderScheduler();
-  });
-  wrap.querySelector("[data-save]").addEventListener("click", () => saveSchedSlot(wrap));
-  requestAnimationFrame(syncKind);
-  return wrap;
+  out.appendChild(list);
 }
 
-function schedSpecFromForm(root) {
-  const kind = root.querySelector("#sl-kind").value;
-  if (kind === "everyHours") {
-    const spec = { kind, interval: parseInt(root.querySelector("#sl-interval").value, 10) || 0 };
-    if (root.querySelector("#sl-window-on").checked) {
-      spec.window = { startHour: parseInt(root.querySelector("#sl-win-start").value, 10) || 0,
-                      endHour: parseInt(root.querySelector("#sl-win-end").value, 10) || 0 };
-    }
-    return spec;
+// ---- middle: queue & active ---------------------------------------------------
+function renderQueue(out) {
+  const live = [...(SCHED.active || []), ...(SCHED.queued || [])];
+  const head = el("div", "sec-head");
+  head.appendChild(el("span", "sec-label", "QUEUE & ACTIVE"));
+  if (live.length) head.appendChild(el("span", "count-chip", String(live.length)));
+  out.appendChild(head);
+  if (!live.length) {
+    out.appendChild(el("p", "subtle sched-empty", "Nothing running."));
+    return;
   }
-  const times = [];
-  for (const part of root.querySelector("#sl-times").value.split(",")) {
-    const m = part.trim().match(/^(\d{1,2}):(\d{2})$/);
-    if (m) times.push({ hour: parseInt(m[1], 10), minute: parseInt(m[2], 10) });
-    else if (part.trim()) return { kind, times: [] };  // invalid entry → server-side error text
-  }
-  const spec = { kind, times };
-  if (kind === "weekly") {
-    spec.days = [...root.querySelectorAll("#sl-days input:checked")]
-      .map((cb) => parseInt(cb.dataset.day, 10));
-  }
-  return spec;
-}
-
-function schedPreview() {
-  clearTimeout(_schedPreviewTimer);
-  _schedPreviewTimer = setTimeout(async () => {
-    const modal = document.getElementById("scheduler-modal");
-    if (!modal || !SCHED_EDIT) return;
-    const out = modal.querySelector("#sl-preview");
-    const res = await call("preview_schedule", { spec: schedSpecFromForm(modal) });
-    if (!out || !document.getElementById("scheduler-modal")) return;
-    if (res && res.ok) {
-      out.textContent = res.summary + (res.next_fire ? ` — next ${schedWhen(res.next_fire)}` : "");
-      out.classList.remove("sched-err");
+  const list = el("div", "run-list");
+  for (const r of live) {
+    const row = el("div", "run-row live");
+    if (SCHED_SEL.kind === "run" && SCHED_SEL.id === r.id) row.classList.add("row-sel");
+    const [label, tone] = runStateInfo(r);
+    const main = el("div", "run-main");
+    const top = el("div", "run-top");
+    top.appendChild(el("span", r.state === "queued" ? "run-glyph" : "run-glyph spin", r.state === "queued" ? "⧗" : ""));
+    top.appendChild(el("span", "run-name", r.slot_name));
+    top.appendChild(el("span", `run-capsule ${tone}`, label));
+    main.appendChild(top);
+    let sub;
+    if (r.state === "queued") {
+      const ahead = (SCHED.active || []);
+      sub = ahead.length ? `queued behind ${ahead[0].slot_name}` : "queued — starting shortly";
     } else {
-      out.textContent = (res && (res.error || res.detail)) || "invalid schedule";
-      out.classList.add("sched-err");
+      sub = `started ${schedDuration(r.started_at, Date.now())} ago · ${tildify(r.cwd)}`;
     }
-  }, 250);
+    main.appendChild(el("div", "run-sub subtle", sub));
+    main.addEventListener("click", () => schedSelect({ kind: "run", id: r.id }));
+    row.appendChild(main);
+    const acts = el("div", "run-acts");
+    if (r.state !== "queued") {
+      const over = el("button", "btn ghost small", "Take over");
+      over.title = "Take over in Herdr — Overboard stops managing this run";
+      over.addEventListener("click", () => schedCall("take_over_run", { run_id: r.id }));
+      acts.appendChild(over);
+    }
+    const stop = el("button", "btn ghost small", "Stop");
+    stop.addEventListener("click", () => schedCall("stop_run", { run_id: r.id }));
+    acts.appendChild(stop);
+    row.appendChild(acts);
+    list.appendChild(row);
+  }
+  out.appendChild(list);
 }
 
-async function saveSchedSlot(root) {
-  const btn = root.querySelector("[data-save]");
-  const status = root.querySelector("#sched-status");
-  btn.disabled = true;
-  status.textContent = "Saving…";
-  const slot = {
-    id: SCHED_EDIT.id,
-    name: root.querySelector("#sl-name").value,
-    cwd: root.querySelector("#sl-cwd").value,
-    prompt: root.querySelector("#sl-prompt").value,
-    timeout_minutes: parseInt(root.querySelector("#sl-timeout").value, 10) || 90,
-    schedule: schedSpecFromForm(root),
-    enabled: !!SCHED_EDIT.enabled,
-  };
-  const v = await call("save_slot", { slot });
-  if (v && !v.error) {
-    SCHED = v; SCHED_EDIT = null; renderScheduler();
-  } else {
-    btn.disabled = false;
-    status.textContent = (v && v.error) || "save failed";
+// ---- middle: history -----------------------------------------------------------
+function renderHistory(out) {
+  const all = SCHED.history || [];
+  const hidden = all.filter((r) => r.hidden);
+  const shown = SCHED_SHOW_HIDDEN ? all : all.filter((r) => !r.hidden);
+  const failed = all.filter((r) => !r.hidden && isRunFailure(r)).length;
+
+  const head = el("div", "sec-head");
+  head.appendChild(el("span", "sec-label", "HISTORY"));
+  if (all.length) head.appendChild(el("span", "count-chip", String(all.length)));
+  if (failed) head.appendChild(el("span", "sec-failed", `${failed} failed`));
+  const spacer = el("span", "sec-spacer");
+  head.appendChild(spacer);
+  if (hidden.length) {
+    const tog = el("button", "btn ghost small", SCHED_SHOW_HIDDEN
+      ? `hide ${hidden.length}` : `${hidden.length} hidden`);
+    tog.addEventListener("click", () => { SCHED_SHOW_HIDDEN = !SCHED_SHOW_HIDDEN; renderMidBody(); });
+    head.appendChild(tog);
   }
+  if (all.length) {
+    const clear = el("button", "btn ghost small danger", "Clear");
+    clear.title = "Clear run history";
+    clear.addEventListener("click", async () => {
+      if (!confirm("Clear run history? Transcripts are deleted too.")) return;
+      if (await schedCall("clear_history") && SCHED_SEL.kind === "run") {
+        schedSelect({ kind: "new", id: null });
+      }
+    });
+    head.appendChild(clear);
+  }
+  out.appendChild(head);
+
+  if (!shown.length) {
+    out.appendChild(el("p", "subtle sched-empty", all.length ? "All hidden." : "No runs yet."));
+    return;
+  }
+  const list = el("div", "run-list");
+  for (const r of shown) {
+    const row = el("div", "run-row" + (r.hidden ? " dim" : ""));
+    if (SCHED_SEL.kind === "run" && SCHED_SEL.id === r.id) row.classList.add("row-sel");
+    const [glyph, label, tone] = outcomeInfo(r);
+    const main = el("div", "run-main");
+    const top = el("div", "run-top");
+    top.appendChild(el("span", "run-glyph " + tone, glyph));
+    top.appendChild(el("span", "run-name", r.slot_name));
+    main.appendChild(top);
+    const bits = [label];
+    if (r.ended_at && r.started_at && r.outcome !== "skipped_missed_window") bits.push(schedDuration(r.started_at, r.ended_at));
+    bits.push(ago(new Date(r.ended_at || r.started_at).getTime() / 1000));
+    main.appendChild(el("div", "run-sub subtle", bits.join(" · ")));
+    const msg = (r.completion_message || r.reason || "").replace(/\s+/g, " ");
+    if (msg) main.appendChild(el("div", "run-preview", msg.length > 110 ? msg.slice(0, 110) + "…" : msg));
+    main.addEventListener("click", () => schedSelect({ kind: "run", id: r.id }));
+    row.appendChild(main);
+    const acts = el("div", "run-acts hover");
+    const hide = el("button", "btn ghost small", r.hidden ? "unhide" : "✕");
+    hide.title = r.hidden ? "Show again" : "Hide from history";
+    hide.addEventListener("click", () => schedCall("hide_run", { run_id: r.id, hidden: !r.hidden }));
+    acts.appendChild(hide);
+    row.appendChild(acts);
+    list.appendChild(row);
+  }
+  out.appendChild(list);
+}
+
+// ---- right column ------------------------------------------------------------
+function _schedFindRun(id) {
+  if (!SCHED || SCHED.error) return null;
+  for (const bucket of [SCHED.active || [], SCHED.queued || [], SCHED.history || []]) {
+    const hit = bucket.find((r) => r.id === id);
+    if (hit) return hit;
+  }
+  return null;
+}
+function _schedRunSig(r) {
+  return [r.state, r.herdr_state, r.outcome, r.ended_at, r.completion_message,
+          r.waiting_since, r.stalled_at, r.taken_over, r.hidden].join("|");
+}
+
+function renderRight() {
+  const out = document.getElementById("sched-right");
+  if (!SCHED || SCHED.error) {
+    if (_schedRightKey !== "none") { out.textContent = ""; _schedRightKey = "none"; }
+    return;
+  }
+  let key, build;
+  if (SCHED_SEL.kind === "run") {
+    const run = _schedFindRun(SCHED_SEL.id);
+    if (!run) {
+      // The run vanished (history cleared / server restarted) — fall back.
+      SCHED_SEL = { kind: "new", id: null };
+      key = "new"; build = () => slotEditorPane(null);
+    } else {
+      key = "run:" + run.id + ":" + _schedRunSig(run);
+      build = () => runDetailPane(run);
+    }
+  } else if (SCHED_SEL.kind === "slot") {
+    const slot = (SCHED.slots || []).find((s) => s.id === SCHED_SEL.id);
+    if (!slot) { SCHED_SEL = { kind: "new", id: null }; key = "new"; build = () => slotEditorPane(null); }
+    else { key = "slot:" + slot.id; build = () => slotEditorPane(slot); }
+  } else {
+    key = "new"; build = () => slotEditorPane(null);
+  }
+  if (key === _schedRightKey) return;   // never clobber a pane that's in use
+  _schedRightKey = key;
+  out.textContent = "";
+  out.appendChild(build());
 }

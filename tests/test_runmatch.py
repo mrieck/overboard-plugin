@@ -141,3 +141,26 @@ class NormalizeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TrustPromptTests(unittest.TestCase):
+    def test_only_the_trust_dialog_is_answered(self):
+        pane = ("Do you trust the files in this folder?\n"
+                "  ❯ 1. Yes, proceed\n    2. No, exit\n")
+        self.assertEqual(runmatch.trust_prompt_response(pane), "\r")
+        self.assertIsNone(runmatch.trust_prompt_response("Allow Bash(rm -rf)? 1. Yes 2. No"))
+        self.assertIsNone(runmatch.trust_prompt_response(""))
+        self.assertIsNone(runmatch.trust_prompt_response(None))
+
+    def test_only_the_tail_counts(self):
+        old = "trust the files in this ... yes, proceed\n" + ("x" * 3000)
+        self.assertIsNone(runmatch.trust_prompt_response(old))
+
+
+class StallTests(unittest.TestCase):
+    def test_measured_from_last_activity_or_launch(self):
+        self.assertFalse(runmatch.is_stalled(1000.0, None, 1000.0 + 9 * 60, 10))
+        self.assertTrue(runmatch.is_stalled(1000.0, None, 1000.0 + 10 * 60, 10))
+        self.assertFalse(runmatch.is_stalled(1000.0, 1000.0 + 8 * 60, 1000.0 + 10 * 60, 10))
+        self.assertFalse(runmatch.is_stalled(1000.0, None, 1e9, 0))
+        self.assertFalse(runmatch.is_stalled(1000.0, None, 1e9, "nope"))

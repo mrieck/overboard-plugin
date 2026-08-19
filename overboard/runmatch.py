@@ -126,3 +126,32 @@ def assess(cwd: str, started_ts: float, session_id, events, claimed) -> dict:
     completed = session_ended or (stop_seen and pending_subagents <= 0)
     return {"session_id": session_id, "captured": captured, "completed": completed,
             "completion_message": completion_message, "last_activity_ts": last_activity}
+
+
+def trust_prompt_response(pane_text) -> "str | None":
+    """If the pane shows Claude Code's folder-trust dialog, the keystroke that
+    accepts it; None for anything else. Deliberately narrow: only the trust
+    dialog — whose default option is "Yes, proceed", so a bare Enter accepts —
+    is safe to answer for an unattended run. Every other dialog still surfaces
+    as "waiting for input". (Port of RunMatcher.trustPromptResponse.)"""
+    if not isinstance(pane_text, str) or not pane_text:
+        return None
+    tail = pane_text[-2000:].lower()
+    if "trust the files in this" in tail and "yes, proceed" in tail:
+        return "\r"
+    return None
+
+
+def is_stalled(started_ts: float, last_activity_ts, now_ts: float,
+               stall_minutes: int) -> bool:
+    """Silence heuristic, used only when Herdr can't classify the screen: no
+    hook activity for `stall_minutes` (measured from launch until the first
+    event). (Port of RunMatcher.isStalled.)"""
+    try:
+        limit = float(stall_minutes) * 60.0
+    except (TypeError, ValueError):
+        return False
+    if limit <= 0:
+        return False
+    anchor = last_activity_ts if last_activity_ts else started_ts
+    return (now_ts - anchor) >= limit

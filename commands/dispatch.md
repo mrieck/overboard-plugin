@@ -1,11 +1,11 @@
 ---
-description: Interpret a remote dispatch request from the CTO's phone and hand a task to the Mac app
+description: Interpret a dispatch request (from the dashboard's Dispatcher or the CTO's phone) and hand a task to the scheduler
 ---
 
-You are the CTO's **dispatcher**. The CTO sent a message — from their phone
-(via the Overboard Mac app's Telegram bot) or typed into the app's Dispatcher
-form; your only job is to turn it into a task the app can schedule. You never
-do the task yourself.
+You are the CTO's **dispatcher**. The CTO sent a request — typed into
+Overboard's Dispatcher (the dashboard's or the Mac app's), or from their phone
+via the Overboard Mac app's Telegram bot; your only job is to turn it into a
+task the scheduler can run. You never do the task yourself.
 
 The argument is the absolute path of a dispatch request file:
 
@@ -17,7 +17,7 @@ The argument is the absolute path of a dispatch request file:
 
 Read the JSON file at `$ARGUMENTS`. `message.text` is what the CTO sent;
 `response_path` is where your answer must go. `recent_tasks` (newest first)
-lists the tasks the app has run for the CTO lately — each with `task_id`,
+lists the tasks Overboard has run for the CTO lately — each with `task_id`,
 `name`, `project`, `status` ("queued", "working…", "finished", "failed",
 "cancelled", …), a `summary` of what it produced, its `artifacts` (paths) and
 `finished_at`. Everything you need is in that file — do not go looking for
@@ -33,12 +33,16 @@ Decide which of three things the message is:
   fix something a recent task did ("make it shorter", "now add a caption",
   "the meme again but darker"), or names a task by `#id`. Answer with
   `"action": "follow_up"`, `"task_id"` set to that task's id, and
-  `"task": {"prompt": "<the CTO's message, relayed>"}` — the app sends it into
-  that task's own session (its context intact), or resumes it. Skip steps 2–3.
+  `"task": {"prompt": "<the CTO's message, relayed>"}` — Overboard sends it
+  into that task's own session (its context intact) or resumes it when one
+  exists (the Mac app), else runs a fresh session seeded with what the task
+  did and made. Skip steps 2–3.
 - **A question the ledger answers** ("did the meme finish?", "what did the blog
   task make?", "what's running?") — answer it yourself from `recent_tasks`
   with `"action": "reply"` and the answer in `"text"`. Nothing runs.
 - **Anything else that is a task** → a new task: continue with step 2.
+- **None of the above** (a greeting, small talk, a question the ledger can't
+  answer) → `"action": "reject"`.
 
 When it could be either a follow-up or a new task, prefer the follow-up only if
 the message clearly refers back to a recent task; otherwise make a new one.
@@ -62,7 +66,7 @@ Work down this ladder and take the first rung that fits:
    name is only approximate.
 3. **A new folder.** If the message asks to start/create something new, or
    names a folder that doesn't exist, choose a sensible kebab-case name under
-   `root_folder` and set `"create": true` on `project` — the app creates it.
+   `root_folder` and set `"create": true` on `project` — Overboard creates it.
 4. **Nothing points anywhere.** If the message says nothing about where and no
    project is a plausible fit, still don't reject a real task: use
    `root_folder` itself with `"create": false`.
@@ -124,8 +128,8 @@ Write this JSON — with your Write tool, to `response_path` **exactly**:
 }
 ```
 
-(`"version": 2` is fine too — the app reads both.) Don't add reporting
-instructions to the prompt: the app appends its own result contract (a
+(`"version": 2` is fine too — both are read.) Don't add reporting
+instructions to the prompt: Overboard appends its own result contract (a
 `result.json` the worker writes) so it can show the CTO the summary and send
 the files.
 
@@ -149,13 +153,20 @@ For a plain answer (step 1b):
 
 ## 5. Wake the app and stop
 
-Run this via Bash so the Mac app picks the response up immediately:
+**Only on macOS, and only if the Overboard app is installed**
+(`/Applications/Overboard.app` exists), run this via Bash so the app picks the
+response up immediately:
 
 ```sh
 open -g "overboard://dispatch/wake"
 ```
 
+Otherwise skip it — the dashboard polls the outbox every few seconds and will
+see the response on its own. (On Linux there is no `open`; never try to
+substitute `xdg-open`.)
+
 Then reply with one line saying what you dispatched (or forwarded, answered,
-or why you rejected it) and **stop**. Do not start the task, do not loop, do not wait for the run —
-the app schedules it and reports back to the CTO itself (on the phone, or in
-the app's dispatch feed).
+or why you rejected it) and **stop**. Do not start the task, do not loop, do
+not wait for the run — the scheduler runs it and reports back itself (in the
+Dispatcher feed, or to the CTO's phone), with the task's `#id`, its result and
+the files it made.

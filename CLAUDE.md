@@ -28,17 +28,21 @@ Prefer this vocabulary in code and copy: "CTO", "the team", "assistant",
    - `.mcp.json` → `overboard/mcp_server.py`: a hand-rolled stdlib JSON-RPC stdio
      MCP server — the assistant's hands (read inputs, write results).
    - `commands/overboard.md`: the `/overboard` command.
-   - `commands/dispatch.md`: the `/overboard:dispatch` command — the Mac app's
-     Telegram dispatcher hands it a request-file path; the session resolves the
-     target project via `list_projects`, writes a response JSON next to it, and
-     nudges the app with `open -g overboard://dispatch/wake`. The request also
-     carries `recent_tasks` (the app's task ledger), so the response may be
-     `create_task`, `follow_up` (continue a recent task with a revision
-     prompt), `reply` (answer from the ledger) or `reject`. It never executes
-     the task itself and never sees chat credentials.
+   - `commands/dispatch.md`: the `/overboard:dispatch` command — shared by the
+     dashboard's Dispatcher (`overboard/dispatch.py`) and the Mac app's
+     Telegram dispatcher. Either hands it a request-file path; the session
+     resolves the target project via `list_projects`, writes a response JSON
+     next to it, and (macOS + app installed only) nudges the app with
+     `open -g overboard://dispatch/wake` — the dashboard polls the outbox
+     instead. The request also carries `recent_tasks` (the task ledger), so
+     the response may be `create_task`, `follow_up` (continue a recent task
+     with a revision prompt), `reply` (answer from the ledger) or `reject`. It
+     never executes the task itself and never sees chat credentials.
    - `skills/cto-assistant/SKILL.md`: the assistant's full playbook.
 2. **Dashboard** — `python3 -m overboard.app`: a stdlib `http.server` you view in
-   a browser at `http://localhost:8787`. Two-pane UI (see below). Pure viewer.
+   a browser at `http://localhost:8787`. A panel strip + three panels (see
+   below). `OVERBOARD_STATE_DIR=<dir>` points it at another state folder (a
+   fixture corpus) without touching `~/.cache/overboard`.
 
 ## Key-free by design
 
@@ -95,6 +99,20 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
   `~/Library/Application Support`.
 - `plugins_popular.json` — **dashboard-owned** 6h cache of the public
   plugmyplugin.com popular-plugins API (`claudeplugins.fetch_popular`).
+- `dispatch/` (dispatches.json, inbox/, outbox/, archive/, tasks/<id>/) —
+  **dashboard-owned**: the web Dispatcher's ledger + drop-box
+  (`overboard/dispatch.py`). The dispatcher *session* reads one request file
+  and writes one response file (that's the whole contract); the worker session
+  writes `tasks/<id>/result.json` in a folder it's granted via `--add-dir`.
+  Wired to the scheduler through two injected seams (`scheduler.on_tick` scans
+  the outbox every 5s; `scheduler.on_run_committed` records results) so
+  `scheduler.py` never imports `dispatch.py`. Browser-only by design — the
+  phone path (Telegram) is the Mac app's paid feature and is pitched, not built.
+- Scheduler/dispatcher knobs — `scheduler_concurrency` (1–8),
+  `default_timeout_minutes`, `run_directory` (the Overboard run directory: where
+  dispatcher sessions run and new task folders may be created) — live in
+  `credentials.json` next to the tracking knobs (`store.scheduler_knobs`), saved
+  from Settings ▸ Misc.
 
 ## Claude plugin management (claudeplugins.py + workspaces.py)
 
@@ -121,6 +139,25 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
   `workspace.json`; `_begin_run` re-resolves the workspace at fire time (a
   deleted workspace fails the run loudly) and refuses to run inside
   `~/.claude/plugins` (mirrors the Mac app's PluginCacheGuard).
+- Schedule kinds (`overboard/schedule.py`, byte-compatible with the Mac app's
+  ScheduleSpec): `daily`, `weekly`, `everyHours` (+ window) and `once`
+  (`{"kind":"once","date":"<ISO UTC Z>"}`; `parse_iso_any` is the one place
+  that reads ISO dates — py3.9's `fromisoformat` can't take a `Z`). A once slot
+  disables itself when it fires. The engine (`overboard/scheduler.py`) also:
+  admits up to `scheduler_concurrency` runs (one launch at a time, one run per
+  slot), answers the folder-trust dialog once per run (`runmatch.
+  trust_prompt_response` — deliberately the *only* dialog it answers), flags
+  `waiting_since`/`stalled_at`, supports **take over** (`taken_over` → no
+  auto-/exit, pane left open), history hide/remove/clear, and **ephemeral
+  runs** (`run_ephemeral`: `slot_id` = `ephemeral:<uuid>`, never in
+  slots.json — the dispatcher's sessions).
+- `overboard/promptcomplete.py` (port of the Mac app's Prompt/ folder) backs the
+  prompt fields: the slash-command catalog (`~/.claude/commands`,
+  `<cwd>/.claude/commands`, every installed plugin's `commands/**.md` +
+  `skills/*/SKILL.md`; canonical `plugin:name`, bare name as alias), `~/ ./ /`
+  path completion, and the local > project > user enablement check. Pure over
+  injected listers; the catalog scan is cached 30s and invalidated by
+  `plugin_action`.
 
 `store._atomic_write` uses a **unique** temp file (`tempfile.mkstemp`) per write —
 a fixed `.tmp` name raced when the background analyzer and a refresh saved state
@@ -128,22 +165,53 @@ concurrently (the `state.json.tmp` error).
 
 `Api._build_view` overlays `ai.json` onto `state.json` at read time.
 
-## The dashboard UI (three-pane: sidebar, detail, context)
+## The dashboard UI (panel strip + three panels)
 
-- **Left sidebar** (`overboard/web/`): condensed project list. Each row = project
-  name + a calendar-style **activity grid** (rows = weeks Mon→Sun, newest week
-  on top; the current week + 4 full weeks ≈ last 5 weeks, `lvl-0..lvl-4`
-  intensity) + a compact active/idle chip + a `⚑ N` review flag when the
-  assistant has flagged items. Clicking a row selects the project.
-- **Right panel**: the selected project's full detail. Top row = **summary on the
-  left, 5-week commit grid on the right**. Below: the assistant's report
-  (narrative + review flags), **Recent work** cards (the assistant's per-sprint
-  delta layer — newest-first, expandable, hide with ✕; `need_review` in
-  `get_pending_work` drives them, the `work-reviewer` subagent extracts from real
-  git diffs, `record_work_review` persists, `hidden_work_reviews` in state.json
-  remembers hides), recent activity from the team, the repositories,
-  and — **always shown, no button** — each local repo's analysis (Overview /
-  Prompts / Data shape).
+`overboard/web/` is vanilla HTML/JS, no build step. `panels.js` owns the
+**strip** (a port of the Mac app's PanelStrip: Projects · Scheduler · Plugins,
+Settings at the bottom; keys `1`/`2`/`3`, Esc), the hash **router**
+(`#/projects/<name>`, `#/scheduler`, `#/scheduler/run/<id>`,
+`#/scheduler/slot/<id>`, `#/plugins`, `#/settings/<page>`; legacy `#<name>` still
+works) and the top **banners**. Panels are long-lived DOM hosts
+(`#panel-projects/-scheduler/-plugins`) toggled with `hidden`; each registers a
+poller (`registerPanel`) so only the visible panel polls. `strip_status` (cheap:
+scheduler counts + installed-plugin count) keeps the badge/tooltips live.
+
+- **Projects** (`app.js`) is the three-pane board. **Left sidebar**: condensed
+  project list — name + a calendar-style **activity grid** (rows = weeks
+  Mon→Sun, newest week on top; the current week + 4 full weeks ≈ last 5 weeks,
+  `lvl-0..lvl-4` intensity) + active/idle chip + a `⚑ N` review flag. **Center**:
+  the selected project's detail — summary on the left, 5-week grid on the right;
+  the assistant's report (narrative + review flags), **Recent work** cards (the
+  assistant's per-sprint delta layer — newest-first, expandable, hide with ✕;
+  `need_review` in `get_pending_work` drives them, the `work-reviewer` subagent
+  extracts from real git diffs, `record_work_review` persists,
+  `hidden_work_reviews` in state.json remembers hides), recent activity, the
+  repositories, and — always shown — each local repo's analysis (Overview /
+  Prompts / Data shape). **Right**: the collapsible Direction pane (launches,
+  status, vision).
+- **Scheduler** (`scheduler.js` + `slot_editor.js` + `run_detail.js` +
+  `dispatch.js`) mirrors the Mac app's SchedulerView: left = the **Dispatcher**
+  pane over a **10-day agenda** (per-slot `upcoming` from `scheduler_view`);
+  middle = **Agents | History** (slot rows with an enable switch; queue &
+  active with live state / "waiting for input" / Take over / Stop; history with
+  glyphs, hide/unhide/clear); right = the permanent **slot editor** (schedule
+  segmented Once · Daily · Weekly · Every N hours — `scheduleEditor()` is also
+  what plugins.js' workspace form uses, reading `data-field` attributes, never
+  ids) or the picked run's **detail** ("What it reported" = the closing message
+  as prose, a facts card, the raw capture behind a disclosure). The poll always
+  re-renders the left/middle columns; the right column is rebuilt only when the
+  selection (or the picked run's record) changes — that's what keeps typing
+  safe, not a "freeze while editing" rule.
+- **Plugins** (`plugins.js`): Installed / Task workspaces / Browse popular.
+- **Settings** (`app.js` `openSettings(page)`): a modal with the Mac app's four
+  pages — General (service + Herdr + claude CLI status), Sources (providers,
+  roots, tracking, exclusions), Integrations (the Dispatcher + the Pro/phone
+  pitch), Misc (run directory, concurrency, default timeout). All four pages
+  are in the DOM; one Save reads everything.
+- `promptfield.js` is the completion-aware textarea (slash commands, paths, the
+  "isn't enabled in <folder>" notice with an Enable button) used by the slot
+  editor and the dispatcher.
 
 **Analysis is automatic.** The *static* part (structure, DB shape, and a noisy
 keyword prompt scan) runs buttonless: `Api._ensure_analyses` runs in a background
@@ -173,10 +241,11 @@ on later passes — a fresh install never "scans all repos at once."
 When adding a new agent-owned panel, follow this exact path: new `ai.json` key →
 `fresh_ai()` → a `set_*` MCP tool → `_overlay_ai` → a frontend tab.
 
-Frontend is vanilla HTML/JS (`web/index.html`, `app.js`, `styles.css`), no build
-step, `fetch('/api/<method>')` to the Python `Api`. Mermaid is vendored offline.
+Frontend calls `fetch('/api/<method>')` to the Python `Api` — every new method
+must be added to `ALLOWED` in `app._make_handler`. Mermaid is vendored offline.
 There are **no commit bar charts** — the day grid replaced them; don't bring bars
-back.
+back. Glyphs in the UI are plain Unicode (✓ ✕ ■ ↷ ◔), not emoji — they must
+render with the UI font on a box with no emoji font.
 
 ## Sources (Bitbucket + GitHub + local git, merged)
 
@@ -231,7 +300,7 @@ users.
 ## Credentials & setup
 
 Tokens live in `~/.cache/overboard/credentials.json` (mode 0600, machine-local),
-managed by the dashboard **⚙ Settings** panel (`Api.get_settings`/`save_settings`
+managed by the dashboard **Settings ▸ Sources** page (`Api.get_settings`/`save_settings`
 — tokens are masked on read, blank-on-save keeps the existing one).
 `store.load_sources()` returns enabled+complete sources and **never raises**, so
 the dashboard **boots with no credentials** (`app.main` no longer exits; the

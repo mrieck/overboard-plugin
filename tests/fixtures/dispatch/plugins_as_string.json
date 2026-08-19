@@ -1,0 +1,3 @@
+{"version": 2, "dispatch_id": "DID", "action": "create_task",
+ "project": {"name": "proj", "path": "PROJ"},
+ "task": {"name": "T", "prompt": "Do the thing.", "when": "now", "plugins": "overboard, seo-blog"}}

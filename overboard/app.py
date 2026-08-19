@@ -22,7 +22,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from overboard import analysis, claudeplugins, debuglog, diagram, events, localgit, localrepo, manager, providers, schedule, scheduler, store, workspaces
+from overboard import analysis, claudeplugins, debuglog, diagram, dispatch, events, herdr, localgit, localrepo, manager, promptcomplete, providers, schedule, scheduler, store, workspaces
 
 APP_TITLE = "Overboard"
 ICON_NORMAL = "applications-development"
@@ -559,6 +559,11 @@ class Api:
         # the HTTP bind succeeds — the bind is the single-instance lock, and the
         # "port taken" path also builds an Api, which must never double-fire.
         self.scheduler = scheduler.Scheduler()
+        # The web Dispatcher rides the scheduler's tick/commit seams (no
+        # import cycle; both sides stay fakeable in tests).
+        self.dispatcher = dispatch.Dispatcher(self.scheduler)
+        self.scheduler.on_tick = self.dispatcher.tick
+        self.scheduler.on_run_committed = self.dispatcher.run_committed
         # First run on this machine: discover local clones so badges work
         # immediately, before any manual rescan.
         if not localrepo.links_for_machine(self.state):
@@ -810,6 +815,8 @@ class Api:
         fresh_config = store.load_config()
         bb = dict(cred.get("bitbucket") or {})
         gh = dict(cred.get("github") or {})
+        knobs = store.scheduler_knobs(cred)
+        claude_bin = claudeplugins.claude_binary()
         # Reflect a legacy (.env-derived) Bitbucket source even before it's been
         # saved into credentials.json.
         if not cred:
@@ -838,6 +845,18 @@ class Api:
             "excluded_repos": sorted(self.state.get("excluded_repos") or []),
             # Project names the CTO excluded from the board (manage/undo here).
             "excluded_projects": sorted(self.state.get("excluded_projects") or []),
+            # Scheduler / dispatcher knobs (credentials.json; see store.scheduler_knobs).
+            "scheduler_concurrency": knobs["concurrency"],
+            "scheduler_concurrency_max": store.SCHEDULER_CONCURRENCY_MAX,
+            "default_timeout_minutes": knobs["default_timeout_minutes"],
+            "run_directory": knobs["run_directory"] or "",
+            "run_directory_problem": _run_directory_problem(knobs["run_directory"]),
+            # Service status for Settings ▸ General.
+            "herdr": dict(self.scheduler.herdr_health(),
+                          binary=herdr.find_binary(),
+                          claude_integration_installed=_herdr_claude_integration_installed()),
+            "claude_cli": {"found": claude_bin is not None, "path": claude_bin},
+            "known_paths": sorted(set(localrepo.links_for_machine(self.state).values())),
         }
 
     def detect_roots(self) -> dict:
@@ -847,7 +866,9 @@ class Api:
 
     def save_settings(self, bitbucket: dict | None = None, github: dict | None = None,
                       localgit: dict | None = None, local_roots: list | None = None,
-                      commit_window_days=None, hide_idle_local=None) -> dict:
+                      commit_window_days=None, hide_idle_local=None,
+                      scheduler_concurrency=None, default_timeout_minutes=None,
+                      run_directory=None) -> dict:
         """Write credentials.json (a blank token keeps the existing one),
         rebuild sources, rediscover local clones, and refresh."""
         cred = store.load_credentials()
@@ -884,7 +905,28 @@ class Api:
                 pass
         if hide_idle_local is not None:
             cred["hide_idle_local"] = bool(hide_idle_local)
+        if scheduler_concurrency is not None:
+            try:
+                cred["scheduler_concurrency"] = max(
+                    1, min(store.SCHEDULER_CONCURRENCY_MAX, int(scheduler_concurrency)))
+            except (TypeError, ValueError):
+                pass
+        if default_timeout_minutes is not None:
+            try:
+                cred["default_timeout_minutes"] = max(5, min(24 * 60, int(default_timeout_minutes)))
+            except (TypeError, ValueError):
+                pass
+        if run_directory is not None:
+            run_dir = str(run_directory or "").strip()
+            if run_dir:
+                problem = _run_directory_problem(run_dir)
+                if problem:
+                    raise ValueError(problem)
+                cred["run_directory"] = str(Path(run_dir).expanduser())
+            else:
+                cred.pop("run_directory", None)
         store.save_credentials(cred)
+        self.scheduler.invalidate_knobs()
         # Api.config is loaded once at startup — reload so the new window/idle
         # knobs (overlaid from credentials by load_config) apply to the refresh
         # below, not just the next process.
@@ -1177,6 +1219,24 @@ class Api:
             return False
         return _open_terminal(path)
 
+    # ---- panel strip --------------------------------------------------------
+    def strip_status(self) -> dict:
+        """Badge/tooltip inputs for the panel strip, polled from every panel:
+        scheduler counts (no herdr probe) + installed-plugin count (the
+        inventory is a filesystem scan, so it's cached for 30s)."""
+        now = time.monotonic()
+        cached = getattr(self, "_strip_inv", None)
+        if cached is None or now - cached[0] > 30:
+            try:
+                installed = len(claudeplugins.inventory().get("plugins") or {})
+            except Exception:
+                installed = 0
+            cached = (now, installed)
+            self._strip_inv = cached
+        out = self.scheduler.counts()
+        out["installed"] = cached[1]
+        return out
+
     # ---- scheduler (slots that fire unattended claude runs via herdr) -----
     def scheduler_view(self) -> dict:
         view = self.scheduler.view()
@@ -1200,6 +1260,52 @@ class Api:
 
     def get_run_transcript(self, run_id: str) -> dict:
         return self.scheduler.transcript(run_id)
+
+    def take_over_run(self, run_id: str) -> dict:
+        """Hand the run to the CTO: focus its pane, stop managing it, and put
+        a Herdr client on screen (pane.focus rearranges a session nobody may
+        be looking at)."""
+        view = self.scheduler.take_over(run_id)
+        _open_herdr_client()
+        return view
+
+    def open_in_herdr(self, run_id: "str | None" = None) -> dict:
+        """Best effort: focus the run's pane and open a terminal attached to
+        Herdr. `ok` false → the UI shows the command to run by hand."""
+        if run_id:
+            run = self.scheduler.find_run(run_id)
+            if run and run.get("pane_id"):
+                herdr.focus(run["pane_id"])
+        return {"ok": _open_herdr_client(), "command": herdr.find_binary() or "herdr"}
+
+    # ---- dispatcher (browser-only; the phone path is the Mac app's) -------
+    def dispatch_view(self) -> dict:
+        return self.dispatcher.view()
+
+    def begin_dispatch(self, text: str) -> dict:
+        record = self.dispatcher.begin(text)
+        out = self.dispatcher.view()
+        out["started"] = record
+        return out
+
+    def dispatch_record(self, dispatch_id: str) -> dict:
+        return {"record": self.dispatcher.record(dispatch_id)}
+
+    # ---- prompt completion (slot editor / dispatcher fields) --------------
+    def complete_prompt(self, text: str = "", cursor: int = 0, cwd: "str | None" = None) -> dict:
+        return promptcomplete.complete(text or "", cursor or 0, cwd or None)
+
+    def command_enablement(self, text: str = "", cwd: "str | None" = None) -> dict:
+        return promptcomplete.enablement(text or "", cwd or None)
+
+    def hide_run(self, run_id: str, hidden: bool = True) -> dict:
+        return self.scheduler.set_hidden(run_id, hidden)
+
+    def remove_run(self, run_id: str) -> dict:
+        return self.scheduler.remove_run(run_id)
+
+    def clear_history(self) -> dict:
+        return self.scheduler.clear_history()
 
     def preview_schedule(self, spec: dict) -> dict:
         """Live validation for the slot form: summary + next fire, or the error."""
@@ -1237,6 +1343,7 @@ class Api:
     def plugin_action(self, action: str, plugin_id: str, scope: str = "user",
                       cwd: "str | None" = None) -> dict:
         claudeplugins.plugin_action(action, plugin_id, scope, cwd)
+        promptcomplete.invalidate_catalog()
         return self.plugins_view()
 
     def add_marketplace(self, source: str) -> dict:
@@ -1285,8 +1392,12 @@ def _make_handler(api: "Api"):
                "get_context", "set_active_launch", "update_active_launch",
                "pushback_launch", "complete_launch", "save_vision",
                "set_project_status", "rename_project",
+               "strip_status",
                "scheduler_view", "save_slot", "delete_slot", "toggle_slot",
                "run_slot_now", "stop_run", "get_run_transcript", "preview_schedule",
+               "take_over_run", "open_in_herdr", "hide_run", "remove_run", "clear_history",
+               "complete_prompt", "command_enablement",
+               "dispatch_view", "begin_dispatch", "dispatch_record",
                "plugins_view", "plugin_action", "add_marketplace", "popular_plugins",
                "save_workspace", "delete_workspace", "link_workspace_slot"}
     CONTENT_TYPES = {
@@ -1352,25 +1463,95 @@ def _make_handler(api: "Api"):
     return Handler
 
 
-def _open_terminal(path: str) -> bool:
-    """Open a terminal emulator with its working directory at `path`. Returns
-    True if something was launched. macOS is the primary target (prefers iTerm,
-    falls back to Terminal); on Linux the first available emulator wins."""
+def _run_directory_problem(path) -> "str | None":
+    """Why `path` can't be the Overboard run directory (the folder the
+    dispatcher's sessions and new task folders live under), or None."""
+    if not path:
+        return None
+    p = Path(str(path)).expanduser()
+    resolved = os.path.realpath(str(p))
+    for root, why in ((str(store.STATE_DIR), "the plugin cache"),
+                      (str(Path.home() / ".claude" / "plugins"), "~/.claude/plugins")):
+        real = os.path.realpath(os.path.expanduser(root))
+        if resolved == real or resolved.startswith(real + os.sep):
+            return f"the run directory can't be inside {why}"
+    if not p.is_dir():
+        return f"not a folder: {path}"
+    return None
+
+
+def _herdr_claude_integration_installed() -> bool:
+    """`herdr integration install claude` drops a hook under ~/.claude."""
+    hooks = Path.home() / ".claude" / "hooks"
+    try:
+        return any("herdr" in p.name for p in hooks.iterdir())
+    except OSError:
+        return False
+
+
+def _open_herdr_client() -> bool:
+    """Put a Herdr client on the user's screen: a terminal that `exec`s the
+    herdr binary, which attaches to the same persistent session the runs
+    live in (the plugin's counterpart of the Mac app's HerdrExternalOpen)."""
+    binary = herdr.find_binary()
+    if not binary:
+        return False
     if sys.platform == "darwin":
+        # A .command file is the one way to hand Terminal a command without
+        # Apple Events. Rewritten every open so a moved binary can't strand it.
+        script = store.STATE_DIR / "attach-herdr.command"
+        try:
+            store.STATE_DIR.mkdir(parents=True, exist_ok=True)
+            script.write_text(f"#!/bin/bash\nexec {shlex.quote(binary)}\n")
+            os.chmod(script, 0o755)
+        except OSError:
+            return False
+        return _spawn(["open", "-a", "Terminal", str(script)])
+    return _open_terminal(str(Path.home()), command=[binary])
+
+
+def _spawn(cmd: list) -> bool:
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
+
+
+def _open_terminal(path: str, command: "list | None" = None) -> bool:
+    """Open a terminal emulator with its working directory at `path`, running
+    `command` (a shell when None). Returns True if something was launched.
+    macOS is the primary target (prefers iTerm, falls back to Terminal); on
+    Linux the first available emulator wins."""
+    if sys.platform == "darwin":
+        if command:
+            script = store.STATE_DIR / "open-terminal.command"
+            try:
+                store.STATE_DIR.mkdir(parents=True, exist_ok=True)
+                script.write_text("#!/bin/bash\ncd " + shlex.quote(path) + "\nexec "
+                                  + " ".join(shlex.quote(c) for c in command) + "\n")
+                os.chmod(script, 0o755)
+            except OSError:
+                return False
+            return _spawn(["open", "-a", "Terminal", str(script)])
         app = "iTerm" if os.path.isdir("/Applications/iTerm.app") else "Terminal"
         cmd = ["open", "-a", app, path]
     else:
+        # The shell line an emulator's -e/-- runs; `exec` so the window IS the
+        # command rather than a shell wrapping it.
+        run = (f"cd {shlex.quote(path)}; exec " + " ".join(shlex.quote(c) for c in command)
+               if command else f"cd {shlex.quote(path)}; exec bash")
         # (binary, extra args) tried in order; the first on PATH is used.
         candidates = [
-            ("gnome-terminal", ["--working-directory=" + path]),
-            ("konsole", ["--workdir", path]),
-            ("xfce4-terminal", ["--working-directory=" + path]),
-            ("tilix", ["--working-directory=" + path]),
-            ("terminator", ["--working-directory=" + path]),
-            ("kitty", ["--directory", path]),
-            ("alacritty", ["--working-directory", path]),
-            ("x-terminal-emulator", ["--working-directory=" + path]),  # last resort
-            ("xterm", ["-e", "bash", "-c", f"cd {shlex.quote(path)}; exec bash"]),
+            ("gnome-terminal", ["--working-directory=" + path] + (["--", "bash", "-c", run] if command else [])),
+            ("konsole", ["--workdir", path] + (["-e", "bash", "-c", run] if command else [])),
+            ("xfce4-terminal", ["--working-directory=" + path] + (["-e", f"bash -c {shlex.quote(run)}"] if command else [])),
+            ("tilix", ["--working-directory=" + path] + (["-e", f"bash -c {shlex.quote(run)}"] if command else [])),
+            ("terminator", ["--working-directory=" + path] + (["-e", f"bash -c {shlex.quote(run)}"] if command else [])),
+            ("kitty", ["--directory", path] + (["bash", "-c", run] if command else [])),
+            ("alacritty", ["--working-directory", path] + (["-e", "bash", "-c", run] if command else [])),
+            ("x-terminal-emulator", ["--working-directory=" + path] + (["-e", f"bash -c {shlex.quote(run)}"] if command else [])),
+            ("xterm", ["-e", "bash", "-c", run]),
         ]
         cmd = None
         for binary, args in candidates:
@@ -1426,6 +1607,12 @@ def run_dashboard(config: dict, port: int, prefer_window: bool,
     # and the periodic refresh.
     api.scheduler.start()
     api.start_auto_refresh()
+    # Dispatch records left mid-flight by the previous process get reconciled
+    # against the scheduler's re-adopted/finished runs.
+    try:
+        api.dispatcher.restore()
+    except Exception as e:  # never block startup on the ledger
+        print(f"[dispatch] restore failed: {e}")
 
     if prefer_window:
         try:

@@ -1,0 +1,4 @@
+{"version": 2, "dispatch_id": "DID", "action": "create_task",
+ "project": {"name": "proj", "path": "PROJ", "create": false},
+ "task": {"name": "Write the post", "prompt": "Write the launch blog post draft in docs/launch.md.", "when": "now", "timeout_minutes": 45, "plugins": ["overboard", "nope"]},
+ "reason": null}

@@ -2,12 +2,25 @@
 
 // ---- backend bridge (stdlib HTTP; no pywebview dependency) ------------------
 async function call(method, args) {
-  const res = await fetch("/api/" + method, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args || {}),
-  });
-  return res.json();
+  let res;
+  try {
+    res = await fetch("/api/" + method, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args || {}),
+    });
+  } catch (e) {
+    // The server is gone (or unreachable) — say so once, at the top.
+    if (typeof setBanner === "function") {
+      setBanner("Can't reach the dashboard server — is `python3 -m overboard.app` still running?", "red");
+    }
+    throw e;
+  }
+  const out = await res.json();
+  // Validation errors ({error}) are shown inline by each caller; the banner is
+  // for the server being gone — clear it as soon as anything answers again.
+  if (typeof clearBanner === "function" && document.querySelector("#banners .banner.red")) clearBanner();
+  return out;
 }
 
 // A well-formed view always has a projects array. An error object (e.g. a 403
@@ -195,6 +208,8 @@ function _escCloseDiagram(e) { if (e.key === "Escape") closeDiagramModal(); }
 async function init() {
   wireControls();
   await loadView();
+  // Strip + router: shows whichever panel the hash names (projects by default).
+  panelsInit();
   // No sources configured yet → guide the user through onboarding right away.
   if (VIEW && !VIEW.has_sources) openWizard();
   // First paint shows cached state; then pull fresh data in the background.
@@ -225,16 +240,9 @@ async function loadView() {
 
 // ---- top-level controls ----------------------------------------------------
 function wireControls() {
-  // Editing the #hash (or navigating to a pasted deep-link) selects live too.
-  window.addEventListener("hashchange", () => {
-    const name = projectFromHash();
-    if (name && name !== SELECTED) selectProject(name);
-  });
+  // Hash changes (panel switches, pasted deep-links) are routed by panels.js.
   document.getElementById("refresh").addEventListener("click", refresh);
   document.getElementById("rescan").addEventListener("click", rescan);
-  document.getElementById("settings").addEventListener("click", openSettings);
-  document.getElementById("scheduler").addEventListener("click", openScheduler);
-  document.getElementById("plugins").addEventListener("click", openPlugins);
   document.getElementById("context-toggle").addEventListener("click", toggleContext);
   applyContextCollapsed();
 }
@@ -288,10 +296,12 @@ function currentProject() {
   return (VIEW && VIEW.projects.find((p) => p.name === SELECTED)) || null;
 }
 
-// Deep-links: #ProjectName in the URL selects that project. Matched against
-// both the canonical name and the display name, case-insensitively.
+// Deep-links: #/projects/<Name> (or the legacy #Name) selects that project.
+// Matched against both the canonical name and the display name,
+// case-insensitively.
 function projectFromHash() {
-  const raw = decodeURIComponent(location.hash.slice(1)).trim();
+  const r = parseRoute();
+  const raw = r.panel === "projects" && r.arg ? r.arg.trim() : "";
   if (!raw || !VIEW || !VIEW.projects) return null;
   const want = raw.toLowerCase();
   const hit = VIEW.projects.find(
@@ -535,8 +545,11 @@ function activityGrid(counts, big) {
 // ---- right panel: project report -------------------------------------------
 function selectProject(name) {
   SELECTED = name;
-  // Keep the URL shareable (replaceState: no history spam, no hashchange loop).
-  history.replaceState(null, "", "#" + encodeURIComponent(name));
+  // Keep the URL shareable (replaceState: no history spam, no hashchange loop)
+  // — but never while another panel owns the hash (#/scheduler, #/plugins).
+  if (currentPanel() === "projects") {
+    history.replaceState(null, "", "#/projects/" + encodeURIComponent(name));
+  }
   ANALYSES = {};
   AN_OPEN.clear();
   LAUNCH_FORM_OPEN = null;
@@ -900,9 +913,23 @@ function _escClose(e) {
   if (e.key === "Escape") closeActivityModal();
 }
 
-// ---- settings (sources & tokens) -------------------------------------------
-async function openSettings() {
-  const s = await call("get_settings");
+// ---- settings (four pages, like the Mac app's SettingsSheet) ---------------
+// General (service & Herdr) · Sources (GitHub, Bitbucket, local clones,
+// tracking, exclusions) · Integrations (the Dispatcher + the Mac app's phone
+// path) · Misc (run directory, concurrency, default timeout). All four pages
+// live in the DOM and toggle `hidden`, so one Save reads everything.
+const SETTINGS_PAGES = [
+  ["general", "General", "Service & Herdr setup"],
+  ["sources", "Sources", "GitHub, Bitbucket, local clones"],
+  ["integrations", "Integrations", "Dispatcher"],
+  ["misc", "Misc", "Scheduler & run directory"],
+];
+let SETTINGS_PAGE = "general";
+
+async function openSettings(page) {
+  if (typeof page === "string") SETTINGS_PAGE = page;
+  let s;
+  try { s = await call("get_settings"); } catch (_) { return; }
   if (!s || !s.bitbucket) return;
   renderSettingsModal(s);
 }
@@ -915,11 +942,89 @@ function renderSettingsModal(s) {
   ov.addEventListener("click", (e) => { if (e.target === ov) closeSettings(); });
 
   const box = document.createElement("div");
-  box.className = "modal";
+  box.className = "modal modal-settings";
   box.innerHTML =
-    '<div class="modal-head"><h3>Settings — sources</h3>' +
+    '<div class="modal-head"><h3>Settings</h3>' +
     '<button class="btn ghost small" data-close>Close</button></div>' +
-    '<div class="settings-body">' +
+    '<div class="settings-split"><nav class="settings-nav"></nav>' +
+      '<div class="settings-pages">' +
+        '<section class="settings-page" data-page="general"></section>' +
+        '<section class="settings-page" data-page="sources"></section>' +
+        '<section class="settings-page" data-page="integrations"></section>' +
+        '<section class="settings-page" data-page="misc"></section>' +
+      '</div></div>' +
+    '<div class="settings-actions modal-foot"><span id="settings-status" class="subtle"></span>' +
+      '<button class="btn" data-save>Save &amp; refresh</button></div>';
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+
+  const nav = box.querySelector(".settings-nav");
+  for (const [key, title, blurb] of SETTINGS_PAGES) {
+    const b = el("button", "settings-nav-item" + (SETTINGS_PAGE === key ? " on" : ""));
+    b.dataset.page = key;
+    b.appendChild(el("span", "settings-nav-title", title));
+    b.appendChild(el("span", "settings-nav-blurb", blurb));
+    b.addEventListener("click", () => {
+      SETTINGS_PAGE = key;
+      for (const n of nav.querySelectorAll(".settings-nav-item")) n.classList.toggle("on", n.dataset.page === key);
+      for (const pg of box.querySelectorAll(".settings-page")) pg.hidden = pg.dataset.page !== key;
+    });
+    nav.appendChild(b);
+  }
+  for (const pg of box.querySelectorAll(".settings-page")) pg.hidden = pg.dataset.page !== SETTINGS_PAGE;
+
+  settingsGeneral(box.querySelector('.settings-page[data-page="general"]'), s);
+  settingsSources(box.querySelector('.settings-page[data-page="sources"]'), s, box);
+  settingsIntegrations(box.querySelector('.settings-page[data-page="integrations"]'), s);
+  settingsMisc(box.querySelector('.settings-page[data-page="misc"]'), s);
+
+  box.querySelector("[data-close]").addEventListener("click", closeSettings);
+  box.querySelector("[data-save]").addEventListener("click", () => saveSettings(box));
+  document.addEventListener("keydown", _settingsEsc);
+}
+
+function _statusDot(ok, text, warn) {
+  const row = el("div", "svc-row");
+  row.appendChild(el("span", "svc-dot " + (ok ? "ok" : warn ? "warn" : "bad")));
+  row.appendChild(el("span", null, text));
+  return row;
+}
+
+// General — the project analysis service (this dashboard) + Herdr.
+function settingsGeneral(page, s) {
+  page.innerHTML =
+    '<fieldset class="src"><legend>Project analysis service</legend>' +
+      '<div data-role="svc"></div>' +
+      '<p class="subtle hint">The dashboard is the service: analyses, the scheduler and the Dispatcher all run inside <code>python3 -m overboard.app</code>. Keep it running (a systemd user service on Linux) for slots to fire.</p>' +
+    '</fieldset>' +
+    '<fieldset class="src"><legend>Herdr</legend>' +
+      '<div data-role="herdr"></div>' +
+      '<p class="subtle hint">Scheduled runs live in <a href="https://herdr.dev" target="_blank" rel="noopener">Herdr</a> (macOS and Linux) — Overboard schedules, Herdr owns the terminal. ' +
+      'One-time setup, your call: <code>herdr integration install claude</code> teaches Herdr Claude\'s state (idle / working / waiting for input) from Claude itself instead of the screen.</p>' +
+      '<div class="pane-actions"><button class="btn ghost small" data-role="copy">Copy command</button><span class="subtle" data-role="copied"></span></div>' +
+    '</fieldset>' +
+    '<fieldset class="src"><legend>Claude CLI</legend><div data-role="claude"></div></fieldset>';
+  const svc = page.querySelector("[data-role=svc]");
+  svc.appendChild(_statusDot(true, `running at ${location.origin}` + (VIEW && VIEW.machine ? ` · ${VIEW.machine}` : "")));
+  const h = s.herdr || {};
+  const hh = page.querySelector("[data-role=herdr]");
+  hh.appendChild(_statusDot(!!h.installed, h.installed ? `installed · ${h.binary || "herdr"}` : "not installed — get it from herdr.dev", false));
+  hh.appendChild(_statusDot(!!h.reachable, h.reachable ? "server reachable" : `server not running (${h.socket || "socket"}) — started on the next run`, true));
+  hh.appendChild(_statusDot(!!h.claude_integration_installed,
+    h.claude_integration_installed ? "Claude integration installed" : "Claude integration not installed (optional, recommended)", true));
+  page.querySelector("[data-role=copy]").addEventListener("click", async () => {
+    const out = page.querySelector("[data-role=copied]");
+    try { await navigator.clipboard.writeText("herdr integration install claude"); out.textContent = "copied"; }
+    catch (_) { out.textContent = "herdr integration install claude"; }
+  });
+  const c = s.claude_cli || {};
+  page.querySelector("[data-role=claude]").appendChild(
+    _statusDot(!!c.found, c.found ? `found · ${c.path}` : "claude not found on PATH — runs and plugin actions need it"));
+}
+
+// Sources — verbatim the old modal's fieldsets (ids unchanged for saveSettings).
+function settingsSources(page, s, box) {
+  page.innerHTML =
       '<fieldset class="src">' +
         '<legend><label><input type="checkbox" id="bb-enabled"> Bitbucket</label></legend>' +
         '<label>Workspace <input type="text" id="bb-workspace" placeholder="your-workspace"></label>' +
@@ -946,45 +1051,33 @@ function renderSettingsModal(s) {
       '</fieldset>' +
       '<div id="excluded-fieldset"></div>' +
       '<div id="excluded-projects-fieldset"></div>' +
-      '<div class="settings-actions"><span id="settings-status" class="subtle"></span>' +
-      '<button class="btn" data-save>Save &amp; refresh</button></div>' +
-    '</div>';
-  ov.appendChild(box);
-  document.body.appendChild(ov);
+      '<p class="subtle hint">Tokens are saved to <code>~/.cache/overboard/credentials.json</code> (mode 0600, machine-local) and never sent back to the browser.</p>';
 
-  box.querySelector("#bb-enabled").checked = s.bitbucket.enabled;
-  box.querySelector("#bb-workspace").value = s.bitbucket.workspace || "";
-  box.querySelector("#bb-email").value = s.bitbucket.email || "";
-  box.querySelector("#bb-token").placeholder = s.bitbucket.token_set ? "•••• saved — blank keeps it" : "paste token";
-  box.querySelector("#gh-enabled").checked = s.github.enabled;
-  box.querySelector("#gh-token").placeholder = s.github.token_set ? "•••• saved — blank keeps it" : "paste token";
-  box.querySelector("#lg-enabled").checked = !!(s.localgit && s.localgit.enabled);
-  box.querySelector("#local-roots").value = (s.local_roots || []).join(", ");
-  box.querySelector("#win-days").value = s.commit_window_days || 30;
-  box.querySelector("#hide-idle").checked = s.hide_idle_local !== false;
+  page.querySelector("#bb-enabled").checked = s.bitbucket.enabled;
+  page.querySelector("#bb-workspace").value = s.bitbucket.workspace || "";
+  page.querySelector("#bb-email").value = s.bitbucket.email || "";
+  page.querySelector("#bb-token").placeholder = s.bitbucket.token_set ? "•••• saved — blank keeps it" : "paste token";
+  page.querySelector("#gh-enabled").checked = s.github.enabled;
+  page.querySelector("#gh-token").placeholder = s.github.token_set ? "•••• saved — blank keeps it" : "paste token";
+  page.querySelector("#lg-enabled").checked = !!(s.localgit && s.localgit.enabled);
+  page.querySelector("#local-roots").value = (s.local_roots || []).join(", ");
+  page.querySelector("#win-days").value = s.commit_window_days || 30;
+  page.querySelector("#hide-idle").checked = s.hide_idle_local !== false;
 
-  // Excluded repos (hide ✕ on a repo badge lands here) — built with DOM APIs so
-  // each row gets a working re-include button.
-  if ((s.excluded_repos || []).length) {
-    const fs = document.createElement("fieldset");
-    fs.className = "src";
-    const legend = document.createElement("legend");
-    legend.textContent = "Excluded repos";
-    fs.appendChild(legend);
-    for (const slug of s.excluded_repos) {
-      const row = document.createElement("p");
-      row.className = "excluded-row";
-      const name = document.createElement("span");
-      name.className = "slug";
-      name.textContent = slug;
-      row.appendChild(name);
-      const btn = document.createElement("button");
-      btn.className = "btn ghost small";
-      btn.textContent = "re-include";
+  // Excluded repos / projects — built with DOM APIs so each row gets a working
+  // re-include button.
+  const excluded = (legend, items, method, argName, hostId) => {
+    if (!(items || []).length) return;
+    const fs = el("fieldset", "src");
+    fs.appendChild(el("legend", null, legend));
+    for (const item of items) {
+      const row = el("p", "excluded-row");
+      row.appendChild(el("span", "slug", item));
+      const btn = el("button", "btn ghost small", "re-include");
       btn.addEventListener("click", async () => {
         btn.disabled = true;
         box.querySelector("#settings-status").textContent = "Re-including & refreshing…";
-        const v = await callView("include_repo", { slug });
+        const v = await callView(method, { [argName]: item });
         if (v) { VIEW = v; closeSettings(); render(); }
         else {
           btn.disabled = false;
@@ -994,45 +1087,50 @@ function renderSettingsModal(s) {
       row.appendChild(btn);
       fs.appendChild(row);
     }
-    box.querySelector("#excluded-fieldset").replaceWith(fs);
-  }
+    page.querySelector("#" + hostId).replaceWith(fs);
+  };
+  excluded("Excluded repos", s.excluded_repos, "include_repo", "slug", "excluded-fieldset");
+  excluded("Excluded projects", s.excluded_projects, "include_project", "project", "excluded-projects-fieldset");
+}
 
-  // Excluded projects (hide project ✕ in the detail header lands here).
-  if ((s.excluded_projects || []).length) {
-    const fs = document.createElement("fieldset");
-    fs.className = "src";
-    const legend = document.createElement("legend");
-    legend.textContent = "Excluded projects";
-    fs.appendChild(legend);
-    for (const project of s.excluded_projects) {
-      const row = document.createElement("p");
-      row.className = "excluded-row";
-      const name = document.createElement("span");
-      name.className = "slug";
-      name.textContent = project;
-      row.appendChild(name);
-      const btn = document.createElement("button");
-      btn.className = "btn ghost small";
-      btn.textContent = "re-include";
-      btn.addEventListener("click", async () => {
-        btn.disabled = true;
-        box.querySelector("#settings-status").textContent = "Re-including & refreshing…";
-        const v = await callView("include_project", { project });
-        if (v) { VIEW = v; closeSettings(); render(); }
-        else {
-          btn.disabled = false;
-          box.querySelector("#settings-status").textContent = "Failed — restart the dashboard server and retry.";
-        }
-      });
-      row.appendChild(btn);
-      fs.appendChild(row);
-    }
-    box.querySelector("#excluded-projects-fieldset").replaceWith(fs);
-  }
+// Integrations — the Dispatcher (browser) and the Mac app's phone path.
+function settingsIntegrations(page, s) {
+  const ok = !s.run_directory_problem && !!s.run_directory;
+  page.innerHTML =
+    '<fieldset class="src"><legend>Dispatcher</legend>' +
+      '<div data-role="disp"></div>' +
+      '<p class="subtle hint">Type what should get done in the Scheduler panel\'s Dispatcher; a short-lived Claude session picks the project, the time and the plugins, the scheduler runs it, and the result (summary + files) lands in the feed. ' +
+      'Sessions run on your Claude Max/Pro plan inside Herdr — no API key, ever.</p>' +
+      '<p class="subtle hint">Requests and results live under <code>~/.cache/overboard/dispatch/</code>; the dispatcher session never sees anything but its request file.</p>' +
+    '</fieldset>' +
+    '<fieldset class="src pro"><legend>From your phone · Overboard for Mac</legend>' +
+      '<p class="subtle">The same dispatcher, ambient: message your Telegram bot from anywhere ("Create a video meme using this URL…"), get the summary and the files back as messages, reply to continue a task — Slack next. ' +
+      'That is <a href="https://getoverboard.app" target="_blank" rel="noopener">Overboard for Mac</a>\'s headline feature; the dashboard stays browser-first by design.</p>' +
+    '</fieldset>';
+  page.querySelector("[data-role=disp]").appendChild(
+    _statusDot(ok, ok ? `ready · runs in ${s.run_directory}` : "needs an Overboard run directory (Misc)", true));
+}
 
-  box.querySelector("[data-close]").addEventListener("click", closeSettings);
-  box.querySelector("[data-save]").addEventListener("click", () => saveSettings(box));
-  document.addEventListener("keydown", _settingsEsc);
+// Misc — run directory, concurrency, default timeout.
+function settingsMisc(page, s) {
+  const dl = (s.known_paths || []).map((p) => `<option value="${escapeHtml(p)}"></option>`).join("");
+  page.innerHTML =
+    '<fieldset class="src"><legend>Scheduler</legend>' +
+      '<label>Overboard run directory <input type="text" id="run-dir" list="run-dir-paths" placeholder="~/Sites"></label>' +
+      `<datalist id="run-dir-paths">${dl}</datalist>` +
+      '<p class="subtle hint" id="run-dir-hint">Where the Dispatcher\'s sessions run and where new project folders may be created — your workspace root (e.g. <code>~/Sites</code>). Not the plugin cache.</p>' +
+      '<label>Concurrent runs <input type="number" id="sched-cap" min="1" max="' + (s.scheduler_concurrency_max || 8) + '"></label>' +
+      '<p class="subtle hint">How many scheduled sessions may run at once (1–' + (s.scheduler_concurrency_max || 8) + '). Each one spends your plan\'s limits; one agent never overlaps its own next firing.</p>' +
+      '<label>Default timeout (minutes) <input type="number" id="def-timeout" min="5" max="1440"></label>' +
+      '<p class="subtle hint">Used when an agent leaves its timeout blank.</p>' +
+    '</fieldset>';
+  page.querySelector("#run-dir").value = s.run_directory || "";
+  page.querySelector("#sched-cap").value = s.scheduler_concurrency || 1;
+  page.querySelector("#def-timeout").value = s.default_timeout_minutes || 90;
+  if (s.run_directory_problem) {
+    const warn = el("p", "sched-err hint", "⚠ " + s.run_directory_problem);
+    page.querySelector("#run-dir-hint").after(warn);
+  }
 }
 
 function _settingsEsc(e) { if (e.key === "Escape") closeSettings(); }
@@ -1062,16 +1160,24 @@ async function saveSettings(box) {
     local_roots: box.querySelector("#local-roots").value.split(",").map((r) => r.trim()).filter(Boolean),
     commit_window_days: parseInt(box.querySelector("#win-days").value, 10) || null,
     hide_idle_local: box.querySelector("#hide-idle").checked,
+    scheduler_concurrency: parseInt(box.querySelector("#sched-cap").value, 10) || 1,
+    default_timeout_minutes: parseInt(box.querySelector("#def-timeout").value, 10) || 90,
+    run_directory: box.querySelector("#run-dir").value.trim(),
   };
-  const v = await callView("save_settings", payload);
+  let v = null, err = null;
+  try {
+    const raw = await call("save_settings", payload);
+    if (isView(raw)) v = raw; else err = raw && raw.error;
+  } catch (e) { err = String(e); }
   if (v) {
     VIEW = v;
     closeSettings();
     render();
     const proj = currentProject();
     if (proj) loadAnalyses(proj);
+    if (typeof schedRefresh === "function" && currentPanel() === "scheduler") schedRefresh();
   } else {
-    status.textContent = "Save failed — restart the dashboard server and retry.";
+    status.textContent = err ? "Save failed — " + err : "Save failed — restart the dashboard server and retry.";
     saveBtn.disabled = false;
   }
 }

@@ -1,0 +1,3 @@
+{"version": 2, "dispatch_id": "DID", "action": "create_task",
+ "project": {"name": "newthing", "path": "ROOT/newthing", "create": true},
+ "task": {"name": "Scaffold", "prompt": "Scaffold a new Astro site.", "when": "WHEN", "timeout_minutes": 90}}

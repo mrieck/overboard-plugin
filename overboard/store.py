@@ -11,7 +11,9 @@ from pathlib import Path
 PKG_DIR = Path(__file__).resolve().parent
 ENV_PATH = PKG_DIR.parent / ".env"
 CONFIG_PATH = PKG_DIR / "projects.json"
-STATE_DIR = Path.home() / ".cache" / "overboard"
+# OVERBOARD_STATE_DIR points the whole dashboard at another state folder —
+# for running against a fixture corpus without touching the real cache.
+STATE_DIR = Path(os.environ.get("OVERBOARD_STATE_DIR") or (Path.home() / ".cache" / "overboard")).expanduser()
 STATE_PATH = STATE_DIR / "state.json"
 # AI content produced by the /overboard agent (Max sub). A SEPARATE file from
 # state.json so the agent's MCP server and the dashboard never write the same
@@ -87,6 +89,29 @@ def save_credentials(cred: dict) -> None:
         os.chmod(CREDENTIALS_PATH, 0o600)  # tokens live here — keep it private
     except OSError:
         pass
+
+
+# Scheduler / dispatcher knobs — machine-local, saved by the Settings panel
+# into credentials.json next to the tracking knobs. Read fresh by the
+# scheduler thread (cheap) so a saved change applies without a restart.
+SCHEDULER_CONCURRENCY_MAX = 8
+DEFAULT_RUN_TIMEOUT_MINUTES = 90
+
+
+def scheduler_knobs(cred: dict | None = None) -> dict:
+    cred = load_credentials() if cred is None else cred
+    try:
+        cap = int(cred.get("scheduler_concurrency") or 1)
+    except (TypeError, ValueError):
+        cap = 1
+    try:
+        timeout = int(cred.get("default_timeout_minutes") or DEFAULT_RUN_TIMEOUT_MINUTES)
+    except (TypeError, ValueError):
+        timeout = DEFAULT_RUN_TIMEOUT_MINUTES
+    run_dir = cred.get("run_directory")
+    return {"concurrency": max(1, min(SCHEDULER_CONCURRENCY_MAX, cap)),
+            "default_timeout_minutes": max(5, min(24 * 60, timeout)),
+            "run_directory": str(run_dir).strip() if isinstance(run_dir, str) and run_dir.strip() else None}
 
 
 def load_sources(config: dict | None = None) -> list[dict]:

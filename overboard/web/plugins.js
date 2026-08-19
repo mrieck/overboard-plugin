@@ -1,10 +1,11 @@
 "use strict";
 
 // ---- plugins panel (Claude plugin management + task workspaces) -------------
-// Opened from the 🔌 header button. Uses app.js globals: call(), el(), note()
-// and scheduler.js helpers: schedWhen(), schedSpecFromForm(), tildify().
-// List modes re-render on a 5s poll; while any form is open the poll keeps
-// fetching but never re-renders, so typing is never clobbered.
+// A full-width panel picked from the strip (#/plugins). Uses app.js globals:
+// call(), el(), note() and scheduler.js helpers: schedWhen(),
+// schedSpecFromForm(), tildify(). List modes re-render on a 5s poll; while
+// any form is open the poll keeps fetching but never re-renders, so typing is
+// never clobbered.
 
 let PLUG = null;          // latest plugins_view payload
 let PLUG_TAB = "installed";
@@ -15,35 +16,34 @@ let PLUG_POPULAR = null;  // popular_plugins payload
 let _plugTimer = null;
 
 function _plugFormOpen() { return !!(PLUG_EDIT || PLUG_SCHED || PLUG_INSTALL); }
+function _plugVisible() { return currentPanel() === "plugins"; }
 
-async function openPlugins() {
-  PLUG_TAB = "installed";
+async function startPlugins() {
   PLUG_EDIT = PLUG_SCHED = PLUG_INSTALL = null;
+  renderPlugins();
   PLUG = await call("plugins_view");
   renderPlugins();
+  if (_plugTimer) clearInterval(_plugTimer);
   _plugTimer = setInterval(async () => {
     try {
       const v = await call("plugins_view");
       if (v && !v.error) {
         PLUG = v;
+        if (typeof renderStrip === "function") renderStrip();
         if (!_plugFormOpen()) renderPlugins();
       }
     } catch (_) { /* transient poll errors are fine */ }
   }, 5000);
 }
 
-function closePlugins() {
-  const m = document.getElementById("plugins-modal");
-  if (m) m.remove();
-  document.removeEventListener("keydown", _plugEsc);
+function stopPlugins() {
   if (_plugTimer) { clearInterval(_plugTimer); _plugTimer = null; }
-  PLUG_EDIT = PLUG_SCHED = PLUG_INSTALL = null;
 }
-function _plugEsc(e) {
-  if (e.key !== "Escape") return;
+// Esc (from panels.js) backs out of an open form.
+function _plugEscape() {
   if (_plugFormOpen()) { PLUG_EDIT = PLUG_SCHED = PLUG_INSTALL = null; renderPlugins(); }
-  else closePlugins();
 }
+registerPanel("plugins", { start: startPlugins, stop: stopPlugins, escape: _plugEscape });
 
 // An /api call that refreshes the panel; shows err inline on failure.
 async function plugCall(method, args) {
@@ -59,26 +59,33 @@ async function plugCall(method, args) {
 }
 
 function renderPlugins() {
-  const old = document.getElementById("plugins-modal");
-  if (old) old.remove();
-  document.removeEventListener("keydown", _plugEsc);
-  const ov = el("div", "modal-overlay");
-  ov.id = "plugins-modal";
-  ov.addEventListener("click", (e) => { if (e.target === ov) closePlugins(); });
-  const box = el("div", "modal modal-scheduler");
+  const host = document.getElementById("panel-plugins");
+  if (!host) return;
+  host.textContent = "";
+  const inner = el("div", "panel-inner");
 
-  const head = el("div", "modal-head");
-  head.appendChild(el("h3", null,
+  const head = el("div", "panel-head col");
+  const top = el("div", "panel-head-top");
+  top.appendChild(el("h2", null,
     PLUG_EDIT ? (PLUG_EDIT.id ? "Edit workspace" : "New workspace")
       : PLUG_SCHED ? "Workspace schedule"
       : PLUG_INSTALL ? "Install plugin" : "Plugins"));
-  const close = el("button", "btn ghost small", "Close");
-  close.addEventListener("click", closePlugins);
-  head.appendChild(close);
-  box.appendChild(head);
+  if (PLUG && PLUG.inventory && PLUG.inventory.plugins) {
+    top.appendChild(el("span", "subtle", `${Object.keys(PLUG.inventory.plugins).length} installed`));
+  }
+  if (_plugFormOpen()) {
+    const back = el("button", "btn ghost small", "‹ Back");
+    back.addEventListener("click", _plugEscape);
+    top.appendChild(back);
+  }
+  head.appendChild(top);
+  if (PLUG && !PLUG.error && !_plugFormOpen()) plugTabs(head);
+  inner.appendChild(head);
 
-  const body = el("div", "settings-body");
-  if (PLUG && PLUG.error) {
+  const body = el("div", "panel-body");
+  if (!PLUG) {
+    body.appendChild(note("Loading…"));
+  } else if (PLUG.error) {
     body.appendChild(note("Plugins unavailable: " + PLUG.error));
   } else if (PLUG_EDIT) {
     body.appendChild(wsForm());
@@ -87,8 +94,7 @@ function renderPlugins() {
   } else if (PLUG_INSTALL) {
     body.appendChild(installForm());
   } else {
-    plugTabs(body);
-    if (PLUG && PLUG.claude_cli && !PLUG.claude_cli.found) {
+    if (PLUG.claude_cli && !PLUG.claude_cli.found) {
       const warn = el("p", "sched-banner",
         "The claude CLI wasn't found on this machine — install/enable actions are unavailable.");
       body.appendChild(warn);
@@ -100,22 +106,22 @@ function renderPlugins() {
   }
   const status = el("p", "subtle"); status.id = "plug-status";
   body.appendChild(status);
-  box.appendChild(body);
-  ov.appendChild(box);
-  document.body.appendChild(ov);
-  document.addEventListener("keydown", _plugEsc);
+  inner.appendChild(body);
+  host.appendChild(inner);
 }
 
-function plugTabs(body) {
-  const bar = el("div", "plug-tabs");
-  for (const [key, label] of [["installed", "Installed"],
-                              ["workspaces", "Task workspaces"],
-                              ["browse", "Browse popular"]]) {
-    const b = el("button", "btn ghost small" + (PLUG_TAB === key ? " plug-tab-on" : ""), label);
+function plugTabs(host) {
+  const bar = el("div", "sched-tabs");
+  const wsCount = (PLUG && PLUG.workspaces || []).length;
+  for (const [key, label, n] of [["installed", "Installed", null],
+                                 ["workspaces", "Task workspaces", wsCount || null],
+                                 ["browse", "Browse popular", null]]) {
+    const b = el("button", "sched-tab" + (PLUG_TAB === key ? " on" : ""), label);
+    if (n) b.appendChild(el("span", "tab-n", String(n)));
     b.addEventListener("click", () => { PLUG_TAB = key; renderPlugins(); });
     bar.appendChild(b);
   }
-  body.appendChild(bar);
+  host.appendChild(bar);
 }
 
 // ---- installed tab ----------------------------------------------------------
@@ -299,28 +305,18 @@ function wsForm() {
 }
 
 // ---- workspace schedule form ------------------------------------------------
-// Reuses the scheduler form's field ids so schedSpecFromForm() works verbatim.
+// Reuses slot_editor.js' scheduleEditor() / schedSpecFromForm().
 function wsScheduleForm() {
   const ws = PLUG_SCHED;
   const slot = ws.slot || {};
-  const spec = slot.schedule || { kind: "daily" };
+  const spec = slot.schedule || { kind: "daily", times: [{ hour: 9, minute: 0 }] };
   const wrap = el("div", null);
   wrap.innerHTML =
     '<fieldset class="src">' +
-      `<p class="subtle">Runs in ${tildify(ws.path)} with this workspace's plugins.</p>` +
+      `<p class="subtle">Runs in ${escapeHtml(tildify(ws.path))} with this workspace's plugins.</p>` +
       '<label>Prompt <textarea id="wss-prompt" rows="4" ' +
         'placeholder="What should claude do each run?"></textarea></label>' +
-      '<label>Repeats <select id="sl-kind">' +
-        '<option value="daily">Daily</option>' +
-        '<option value="everyHours">Every N hours</option>' +
-      '</select></label>' +
-      '<div id="wss-times-row"><label>Times <input type="text" id="sl-times" placeholder="02:00, 14:30"></label></div>' +
-      '<div id="wss-hours-row" style="display:none">' +
-        '<label>Every <input type="number" id="sl-interval" min="1" max="24" value="2"> hours</label>' +
-        '<label><input type="checkbox" id="sl-window-on"> Only between ' +
-          '<input type="number" id="sl-win-start" min="0" max="23" value="9">:00 and ' +
-          '<input type="number" id="sl-win-end" min="1" max="24" value="18">:00</label>' +
-      '</div>' +
+      '<label>Schedule</label><div id="wss-schedule"></div>' +
       '<label><input type="checkbox" id="wss-enabled"> Enabled</label>' +
     '</fieldset>' +
     '<div class="settings-actions"><span id="plug-status" class="subtle"></span>' +
@@ -329,26 +325,10 @@ function wsScheduleForm() {
       '<button class="btn" data-save>Save schedule</button></div>';
 
   wrap.querySelector("#wss-prompt").value = slot.prompt || "";
-  wrap.querySelector("#sl-kind").value = spec.kind === "everyHours" ? "everyHours" : "daily";
-  wrap.querySelector("#sl-times").value = (spec.times || [{ hour: 9, minute: 0 }])
-    .map((t) => `${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`)
-    .join(", ");
-  if (spec.kind === "everyHours") {
-    wrap.querySelector("#sl-interval").value = spec.interval || 2;
-    if (spec.window) {
-      wrap.querySelector("#sl-window-on").checked = true;
-      wrap.querySelector("#sl-win-start").value = spec.window.startHour;
-      wrap.querySelector("#sl-win-end").value = spec.window.endHour;
-    }
-  }
+  const sched = scheduleEditor(spec, ["once", "daily", "weekly", "everyHours"]);
+  wrap.querySelector("#wss-schedule").appendChild(sched);
+  sched.addEventListener("schedchange", () => schedPreview(sched));
   wrap.querySelector("#wss-enabled").checked = slot.id ? !!slot.enabled : true;
-  const syncKind = () => {
-    const kind = wrap.querySelector("#sl-kind").value;
-    wrap.querySelector("#wss-times-row").style.display = kind === "everyHours" ? "none" : "";
-    wrap.querySelector("#wss-hours-row").style.display = kind === "everyHours" ? "" : "none";
-  };
-  wrap.querySelector("#sl-kind").addEventListener("change", syncKind);
-  requestAnimationFrame(syncKind);
 
   if (slot.id) {
     const un = el("button", "btn ghost small", "Remove schedule");
@@ -370,7 +350,7 @@ function wsScheduleForm() {
       cwd: ws.path,
       prompt: wrap.querySelector("#wss-prompt").value,
       timeout_minutes: slot.timeout_minutes || 90,
-      schedule: schedSpecFromForm(wrap),
+      schedule: schedSpecFromForm(sched),
       enabled: wrap.querySelector("#wss-enabled").checked,
     };
     PLUG_SCHED = null;
@@ -397,8 +377,7 @@ function plugBrowse(body) {
     body.appendChild(fs);
     call("popular_plugins").then((res) => {
       PLUG_POPULAR = res || { payload: null };
-      if (document.getElementById("plugins-modal") && PLUG_TAB === "browse"
-          && !_plugFormOpen()) renderPlugins();
+      if (_plugVisible() && PLUG_TAB === "browse" && !_plugFormOpen()) renderPlugins();
     });
     return;
   }

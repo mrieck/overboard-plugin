@@ -171,12 +171,18 @@ def _wait_until_promptable(pane_id: str, timeout: float) -> None:
                      f"claude was not ready to take a prompt after {int(timeout)}s — {last_seen}")
 
 
-def launch(cwd: str, name: str, prompt: str, ready_timeout: float = 45.0) -> dict:
+def launch(cwd: str, name: str, prompt: str, ready_timeout: float = 45.0,
+           add_dirs: "list | None" = None) -> dict:
     """Start an unattended claude in a fresh tab and submit `prompt`. Returns
-    {pane_id, tab_id, workspace_id, agent_name}."""
+    {pane_id, tab_id, workspace_id, agent_name}. `add_dirs` are granted to the
+    session via `--add-dir` (a dispatched task's result folder)."""
     ensure_server()
     aname = agent_name(name)
     pane = _pane_for_run(cwd, name)
+    args = ["--permission-mode", "auto"]
+    for d in add_dirs or []:
+        if d:
+            args += ["--add-dir", str(d)]
     # A fresh tab's root pane may still be bringing its shell up, and agent.start
     # in that window fails agent_pane_busy (seen live 2026-08-12). Retry briefly;
     # any other error is real.
@@ -185,7 +191,7 @@ def launch(cwd: str, name: str, prompt: str, ready_timeout: float = 45.0) -> dic
         try:
             started = call("agent.start",
                            {"name": aname, "kind": AGENT_KIND, "pane_id": pane["pane_id"],
-                            "args": ["--permission-mode", "auto"],
+                            "args": args,
                             "timeout_ms": STARTUP_TIMEOUT_MS},
                            timeout=STARTUP_TIMEOUT_MS / 1000 + 15)
             break
@@ -289,6 +295,25 @@ def request_exit(agent_name_: str, pane_id: str) -> None:
             call("pane.send_text", {"pane_id": pane_id, "text": "/exit\r"})
         except HerdrError:
             pass
+
+
+def send_text(pane_id: str, text: str) -> bool:
+    """Type raw text into the pane (e.g. "\r" to accept a dialog's default).
+    Never raises — the poll loop that calls this must survive a flaky socket."""
+    try:
+        call("pane.send_text", {"pane_id": pane_id, "text": text})
+        return True
+    except HerdrError:
+        return False
+
+
+def focus(pane_id: str) -> bool:
+    """Bring the run's pane to the front in Herdr (take-over)."""
+    try:
+        call("pane.focus", {"pane_id": pane_id})
+        return True
+    except HerdrError:
+        return False
 
 
 def terminate(pane_id: str) -> None:
