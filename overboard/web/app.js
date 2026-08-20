@@ -1103,9 +1103,9 @@ function settingsIntegrations(page, s) {
       'Sessions run on your Claude Max/Pro plan inside Herdr — no API key, ever.</p>' +
       '<p class="subtle hint">Requests and results live under <code>~/.cache/overboard/dispatch/</code>; the dispatcher session never sees anything but its request file.</p>' +
     '</fieldset>' +
-    '<fieldset class="src pro"><legend>From your phone · Overboard for Mac</legend>' +
-      '<p class="subtle">The same dispatcher, ambient: message your Telegram bot from anywhere ("Create a video meme using this URL…"), get the summary and the files back as messages, reply to continue a task — Slack next. ' +
-      'That is <a href="https://getoverboard.app" target="_blank" rel="noopener">Overboard for Mac</a>\'s headline feature; the dashboard stays browser-first by design.</p>' +
+    '<fieldset class="src pro"><legend>From your phone · Overboard for Mac (Pro)</legend>' +
+      '<p class="subtle">The same dispatcher, ambient: message your Telegram bot from anywhere ("Create a video meme using this URL…"), get the summary and the files back as messages, and reply to continue a task. ' +
+      'That is the headline feature of <a href="https://getoverboard.app" target="_blank" rel="noopener">Overboard for Mac</a>, the Pro version of Overboard; the free dashboard stays browser-first by design.</p>' +
     '</fieldset>';
   page.querySelector("[data-role=disp]").appendChild(
     _statusDot(ok, ok ? `ready · runs in ${s.run_directory}` : "needs an Overboard run directory (Misc)", true));
@@ -1116,9 +1116,15 @@ function settingsMisc(page, s) {
   const dl = (s.known_paths || []).map((p) => `<option value="${escapeHtml(p)}"></option>`).join("");
   page.innerHTML =
     '<fieldset class="src"><legend>Scheduler</legend>' +
-      '<label>Overboard run directory <input type="text" id="run-dir" list="run-dir-paths" placeholder="~/Sites"></label>' +
+      '<label>Overboard run directory' +
+        '<span class="dir-input-row">' +
+          '<input type="text" id="run-dir" list="run-dir-paths" placeholder="~/Projects">' +
+          '<button type="button" class="btn" id="run-dir-browse">Browse…</button>' +
+        '</span>' +
+      '</label>' +
       `<datalist id="run-dir-paths">${dl}</datalist>` +
-      '<p class="subtle hint" id="run-dir-hint">Where the Dispatcher\'s sessions run and where new project folders may be created — your workspace root (e.g. <code>~/Sites</code>). Not the plugin cache.</p>' +
+      '<div id="run-dir-picker" class="dir-picker" hidden></div>' +
+      '<p class="subtle hint" id="run-dir-hint">Where the Dispatcher\'s sessions run and where new project folders may be created — your workspace root (e.g. <code>~/Projects</code>). Not the plugin cache.</p>' +
       '<label>Concurrent runs <input type="number" id="sched-cap" min="1" max="' + (s.scheduler_concurrency_max || 8) + '"></label>' +
       '<p class="subtle hint">How many scheduled sessions may run at once (1–' + (s.scheduler_concurrency_max || 8) + '). Each one spends your plan\'s limits; one agent never overlaps its own next firing.</p>' +
       '<label>Default timeout (minutes) <input type="number" id="def-timeout" min="5" max="1440"></label>' +
@@ -1131,6 +1137,53 @@ function settingsMisc(page, s) {
     const warn = el("p", "sched-err hint", "⚠ " + s.run_directory_problem);
     page.querySelector("#run-dir-hint").after(warn);
   }
+  _wireDirPicker(page.querySelector("#run-dir"), page.querySelector("#run-dir-browse"),
+                 page.querySelector("#run-dir-picker"));
+}
+
+// A small server-backed folder browser (the browser can't hand us a real
+// filesystem path, so the local Python server lists folders instead).
+function _wireDirPicker(input, btn, box) {
+  const hide = () => { box.hidden = true; box.innerHTML = ""; };
+  const load = async (path) => {
+    box.hidden = false;
+    box.innerHTML = '<p class="dir-picker-empty">Loading…</p>';
+    let r = null;
+    try { r = await call("list_dirs", { path: path || null }); } catch (e) { /* banner set by call() */ }
+    if (!r || r.error) {
+      box.innerHTML = "";
+      box.appendChild(el("p", "dir-picker-empty", (r && r.error) || "Couldn't list folders."));
+      return;
+    }
+    box.innerHTML = "";
+    const head = el("div", "dir-picker-head");
+    head.appendChild(el("span", "dir-picker-path", r.display || r.path));
+    const use = el("button", "btn", "Use this folder");
+    use.type = "button";
+    use.addEventListener("click", () => { input.value = r.display || r.path; hide(); });
+    head.appendChild(use);
+    box.appendChild(head);
+    const list = el("div", "dir-picker-list");
+    if (r.parent) {
+      const up = el("button", "dir-picker-row dir-picker-up", "↑ up one level");
+      up.type = "button";
+      up.addEventListener("click", () => load(r.parent));
+      list.appendChild(up);
+    }
+    for (const name of r.dirs) {
+      const row = el("button", "dir-picker-row", name + "/");
+      row.type = "button";
+      row.addEventListener("click", () => load(r.path.replace(/\/+$/, "") + "/" + name));
+      list.appendChild(row);
+    }
+    if (!r.dirs.length) list.appendChild(el("p", "dir-picker-empty", "No subfolders."));
+    box.appendChild(list);
+  };
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (!box.hidden) { hide(); return; }
+    load(input.value.trim() || null);
+  });
 }
 
 function _settingsEsc(e) { if (e.key === "Escape") closeSettings(); }

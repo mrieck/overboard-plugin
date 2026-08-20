@@ -864,6 +864,29 @@ class Api:
         onboarding wizard's 'where do your clones live' step. Read-only."""
         return {"candidates": _detect_candidate_roots()}
 
+    def list_dirs(self, path=None) -> dict:
+        """Visible subfolders of `path` (default: home) for the Settings
+        folder picker. Read-only; falls back to home on a bad path."""
+        home = Path.home()
+        p = Path(os.path.expanduser(str(path))) if path else home
+        try:
+            p = p.resolve()
+        except OSError:
+            p = home
+        if not p.is_dir():
+            p = home
+        parent = None if p == p.parent else str(p.parent)
+        try:
+            dirs = sorted(
+                (n for n in os.listdir(p)
+                 if not n.startswith(".") and (p / n).is_dir()),
+                key=str.lower)
+        except OSError as e:
+            return {"path": str(p), "display": _tilde_path(p), "parent": parent,
+                    "dirs": [], "error": str(e)}
+        return {"path": str(p), "display": _tilde_path(p), "parent": parent,
+                "dirs": dirs}
+
     def save_settings(self, bitbucket: dict | None = None, github: dict | None = None,
                       localgit: dict | None = None, local_roots: list | None = None,
                       commit_window_days=None, hide_idle_local=None,
@@ -1388,7 +1411,7 @@ def _make_handler(api: "Api"):
     ALLOWED = {"get_view", "refresh", "tick", "rescan_local", "analyze",
                "get_analysis", "open_terminal", "dismiss_review", "hide_work_review",
                "exclude_repo", "include_repo", "exclude_project", "include_project",
-               "get_settings", "save_settings", "detect_roots",
+               "get_settings", "save_settings", "detect_roots", "list_dirs",
                "get_context", "set_active_launch", "update_active_launch",
                "pushback_launch", "complete_launch", "save_vision",
                "set_project_status", "rename_project",
@@ -1461,6 +1484,16 @@ def _make_handler(api: "Api"):
             self._json(result)
 
     return Handler
+
+
+def _tilde_path(p: Path) -> str:
+    """Collapse the home prefix to `~` for display/settings values."""
+    s, home = str(p), str(Path.home())
+    if s == home:
+        return "~"
+    if s.startswith(home + os.sep):
+        return "~" + s[len(home):]
+    return s
 
 
 def _run_directory_problem(path) -> "str | None":
