@@ -91,10 +91,14 @@ def assess(cwd: str, started_ts: float, session_id, events, claimed) -> dict:
     last_activity = None
     # Subagent launches minus finishes. May dip negative transiently for
     # foreground subagents (SubagentStop and the tool's PostToolUse land
-    # together, in either order); only the final tally matters. Every subagent
-    # event also forgets any Stop seen so far, so the SubagentStop that zeroes
-    # the tally can't complete the run on the strength of an earlier
-    # turn-boundary Stop while the parent is being re-invoked with the result.
+    # together, in either order); only the final tally matters. A subagent
+    # event with a launch on the books (tally > 0) also forgets any Stop seen
+    # so far, so the SubagentStop that zeroes the tally can't complete the run
+    # on the strength of an earlier turn-boundary Stop while the parent is
+    # being re-invoked with the result. But only with a launch on the books:
+    # sessions that never spawn a subagent still emit one orphan SubagentStop
+    # a few seconds after their final Stop, and un-seeing that Stop left
+    # completion permanently undetectable (runs rode their timeout).
     pending_subagents = 0
 
     for e in events:
@@ -114,8 +118,9 @@ def assess(cwd: str, started_ts: float, session_id, events, claimed) -> dict:
                 pending_subagents += 1
                 stop_seen = False
         elif typ == "SubagentStop":
+            if pending_subagents > 0:
+                stop_seen = False
             pending_subagents -= 1
-            stop_seen = False
         elif typ != "SessionStart":
             continue
         last_activity = ts if last_activity is None else max(last_activity, ts)

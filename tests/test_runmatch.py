@@ -106,6 +106,43 @@ class CompletionTests(unittest.TestCase):
                   ev("Stop", T0 + 20)]
         self.assertTrue(runmatch.assess(CWD, T0, None, events, set())["completed"])
 
+    def test_trailing_orphan_subagent_stop_still_completes(self):
+        # Sessions that never spawn a subagent still emit one orphan
+        # SubagentStop a few seconds after their final Stop (the normal shape,
+        # seen live 2026-08-19). With no launch on the books it must not
+        # un-see the Stop, or the run rides its timeout.
+        events = [ev("SessionStart", T0 + 3),
+                  ev("PostToolUse", T0 + 30, tool_name="Bash"),
+                  ev("Stop", T0 + 120, last_message="pushed both repos"),
+                  ev("SubagentStop", T0 + 122)]
+        v = runmatch.assess(CWD, T0, None, events, set())
+        self.assertTrue(v["completed"])
+        self.assertEqual(v["completion_message"], "pushed both repos")
+        # Idempotent on a re-fed full window (compaction re-reads).
+        self.assertEqual(runmatch.assess(CWD, T0, None, events, set()), v)
+
+    def test_orphan_subagent_stop_mid_run_does_not_block_later_stop(self):
+        events = [ev("SessionStart", T0 + 2),
+                  ev("SubagentStop", T0 + 30),
+                  ev("Stop", T0 + 60, last_message="done")]
+        self.assertTrue(runmatch.assess(CWD, T0, None, events, set())["completed"])
+
+    def test_stop_then_foreground_pair_either_order_waits_for_next_stop(self):
+        # A foreground subagent landing AFTER a turn-boundary Stop holds
+        # completion until the next Stop, whichever order its SubagentStop and
+        # PostToolUse arrive in.
+        for pair in ((("SubagentStop", {}), ("PostToolUse", {"tool_name": "Task"})),
+                     (("PostToolUse", {"tool_name": "Task"}), ("SubagentStop", {}))):
+            events = [ev("SessionStart", T0 + 2),
+                      ev("Stop", T0 + 20, last_message="boundary"),
+                      ev(pair[0][0], T0 + 30, **pair[0][1]),
+                      ev(pair[1][0], T0 + 31, **pair[1][1])]
+            self.assertFalse(runmatch.assess(CWD, T0, None, events, set())["completed"])
+            events.append(ev("Stop", T0 + 60, last_message="real end"))
+            v = runmatch.assess(CWD, T0, None, events, set())
+            self.assertTrue(v["completed"])
+            self.assertEqual(v["completion_message"], "real end")
+
     def test_session_end_always_completes(self):
         events = [ev("SessionStart", T0 + 2), ev("PostToolUse", T0 + 5, tool_name="Task"),
                   ev("SessionEnd", T0 + 50)]
