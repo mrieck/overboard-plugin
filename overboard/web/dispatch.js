@@ -4,7 +4,7 @@
 // A port of the Mac app's DispatcherPane, browser-only: the CTO types what
 // should get done, a short-lived /overboard:dispatch session works out the
 // project, time and plugins, the scheduler runs it, and the result lands in
-// the RECENT DISPATCHES feed. The phone path (Telegram, Slack next) is
+// the RECENT DISPATCHES feed. The phone path (Telegram) is
 // Overboard for Mac's — pitched here, not built here. Polled with the
 // scheduler panel (dispatchPoll from schedRefresh). Uses promptField().
 
@@ -90,7 +90,7 @@ function _syncHint(host) {
   const a = el("a", "link", "Overboard for Mac");
   a.href = PRO_URL; a.target = "_blank"; a.rel = "noopener";
   hint.appendChild(a);
-  hint.appendChild(document.createTextNode(" dispatches over Telegram (Slack next)."));
+  hint.appendChild(document.createTextNode(" — the Pro version — dispatches over Telegram."));
 }
 
 async function _dispatchNow() {

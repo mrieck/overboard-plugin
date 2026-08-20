@@ -350,6 +350,27 @@ body { display: flex; flex-direction: column; }
 .src .excluded-row .slug { color: var(--muted); word-break: break-all; }
 .src .hint { margin: 8px 0 0; font-size: 11px; }
 .src .hint code { background: var(--chip); padding: 0 4px; border-radius: 4px; }
+/* folder picker (Settings ▸ Misc, run directory) */
+.dir-input-row { display: flex; gap: 6px; align-items: stretch; margin-top: 3px; }
+.dir-input-row input[type="text"] { flex: 1; margin-top: 0; }
+.dir-picker {
+  margin-top: 6px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel-2); overflow: hidden;
+}
+.dir-picker-head {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.dir-picker-path { flex: 1; color: var(--text); word-break: break-all; }
+.dir-picker-list { max-height: 180px; overflow-y: auto; padding: 4px; }
+.dir-picker-row {
+  display: block; width: 100%; text-align: left; padding: 5px 8px;
+  border: none; background: none; color: var(--text); font-size: 12px;
+  border-radius: 6px; cursor: pointer;
+}
+.dir-picker-row:hover { background: var(--chip); }
+.dir-picker-up { color: var(--muted); }
+.dir-picker-empty { margin: 0; padding: 8px 10px; font-size: 11px; color: var(--muted); }
 .settings-actions {
   display: flex; align-items: center; justify-content: flex-end; gap: 12px;
   padding-top: 4px;
