@@ -14,7 +14,7 @@ let _dispField = null;        // the promptField instance (kept across renders)
 let _dispBusy = false;
 let _dispFeedKey = null;
 
-const PRO_URL = "https://getoverboard.app";
+const PRO_URL = "https://tryoverboard.com";
 
 async function dispatchPoll() {
   try {

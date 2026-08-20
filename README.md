@@ -114,7 +114,7 @@ shorter") rebuild the task's context into a fresh session. It needs an
 project folders may be created. State lives in `~/.cache/overboard/dispatch/`.
 
 Dispatching **from your phone** (Telegram, Slack next) is
-[Overboard for Mac](https://getoverboard.app)'s feature; the dashboard's
+[Overboard for Mac](https://tryoverboard.com)'s feature; the dashboard's
 dispatcher is browser-only by design.
 
 Tests: `python3 -m unittest discover -s tests` (stdlib only). To run the

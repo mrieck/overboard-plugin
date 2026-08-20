@@ -1105,7 +1105,7 @@ function settingsIntegrations(page, s) {
     '</fieldset>' +
     '<fieldset class="src pro"><legend>From your phone · Overboard for Mac (Pro)</legend>' +
       '<p class="subtle">The same dispatcher, ambient: message your Telegram bot from anywhere ("Create a video meme using this URL…"), get the summary and the files back as messages, and reply to continue a task. ' +
-      'That is the headline feature of <a href="https://getoverboard.app" target="_blank" rel="noopener">Overboard for Mac</a>, the Pro version of Overboard; the free dashboard stays browser-first by design.</p>' +
+      'That is the headline feature of <a href="https://tryoverboard.com" target="_blank" rel="noopener">Overboard for Mac</a>, the Pro version of Overboard; the free dashboard stays browser-first by design.</p>' +
     '</fieldset>';
   page.querySelector("[data-role=disp]").appendChild(
     _statusDot(ok, ok ? `ready · runs in ${s.run_directory}` : "needs an Overboard run directory (Misc)", true));
