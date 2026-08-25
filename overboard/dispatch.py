@@ -76,8 +76,10 @@ def with_result_contract(prompt: str, task_dir: "str | None") -> str:
             + '{"summary": "<2-4 sentences for the CTO: what you did and where it is>", '
             + '"artifacts": [{"path": "/absolute/path", "kind": "video|image|document|text", '
             + '"caption": "<one line>"}], "links": ["<url>"]}'
-            + " listing every file you produced or changed that the CTO would want to see "
-            + "(absolute paths), then stop.")
+            + " — artifacts is the deliverable: the one file the CTO asked for (the video, the image, "
+            + "the post), first; add a second only if they asked for a second distinct thing. Never list "
+            + "source files, scripts, JSON or config, intermediates, or things you merely changed — "
+            + "mention those in the summary instead. Absolute paths. Then stop.")
 
 
 def rebuilt_prompt(record: dict, follow_up: str) -> str:

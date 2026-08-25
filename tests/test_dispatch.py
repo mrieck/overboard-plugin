@@ -85,7 +85,8 @@ class PureHelperTests(unittest.TestCase):
         out = dispatch.with_result_contract("  Do X.\n", "/t/ab12")
         self.assertTrue(out.startswith("Do X. When you are completely done, write a JSON file at /t/ab12/result.json shaped like "))
         self.assertIn('"summary": "<2-4 sentences for the CTO: what you did and where it is>"', out)
-        self.assertTrue(out.endswith("(absolute paths), then stop."))
+        self.assertIn("artifacts is the deliverable", out)
+        self.assertTrue(out.endswith("Absolute paths. Then stop."))
         self.assertNotIn("\n", out)
         self.assertEqual(dispatch.with_result_contract("p", None), "p")
 
