@@ -2,8 +2,8 @@
 short-lived `/overboard:dispatch` session works out the project, the prompt
 and the time; the scheduler then runs the task and the result lands back in
 the ledger. A port of the *app-originated* half of the Mac app's
-DispatchCoordinator/DispatchStore/DispatchReporting — no Telegram, no chat ids,
-no Keychain: the phone path is the Mac app's (paid) feature.
+DispatchCoordinator/DispatchStore/DispatchReporting — no Telegram or Slack, no
+chat ids, no Keychain: the phone path is the Mac app's (paid) feature.
 
 Layout, under ~/.cache/overboard/dispatch/ (dashboard-owned — written only by
 this module inside the dashboard process; the MCP server and hooks never
