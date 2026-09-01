@@ -1,9 +1,9 @@
 ![Overboard — Shipping too much? You need to go Overboard.](docs/overboard_banner.png)
 
-Overboard is a Claude Code plugin whose dashboard lets your Claude act as the
-**CTO's assistant** — you're the CTO, the other Claude Code sessions are your
-engineering team, and Overboard presents what matters across all your projects
-while that team works. It shows commit activity, architecture and DB-schema
+Overboard is a Claude Code plugin that watches every Claude Code session across
+all your repos and reports what shipped — on the Claude subscription you already
+have. One `/overboard` session becomes your assistant: it keeps a browser
+dashboard current and flags the few things that need you. It shows commit activity, architecture and DB-schema
 visualizations (Mermaid), your projects' real LLM prompts, **Recent work** cards
 distilled from the actual diffs, and — live — the key "needs review" tidbits
 from your working Claudes. Key-free by design: Python standard library only (no
@@ -23,7 +23,7 @@ week on top — the last ~5 weeks) and any "⚑ N to review" flags; the center
 becomes the selected project's detail — summary, your assistant's report,
 **Recent work** review cards, recent activity, and per-repo architecture /
 prompts / data-shape analysis; and a collapsible **right sidebar** is where you
-(the CTO) set the project's **launch/milestone** (type, action, target date,
+set the project's **launch/milestone** (type, action, target date,
 goals — with push-back history) and **vision/direction**. The `/overboard`
 assistant reads that context to sharpen its reports and flag slipping launches.
 **Scheduler** and **Plugins** take the full width (below).

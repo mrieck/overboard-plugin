@@ -2,22 +2,27 @@
 
 ## What this is (the mental model)
 
-Overboard is a Claude Code plugin. Its role is **assistant to the CTO**, *not* a
-"project manager." When you work on this codebase or run `/overboard`, hold this
-framing — it should shape naming, copy, and behavior:
+Overboard is a Claude Code plugin that watches every Claude Code session across
+all the user's repos and reports what shipped — on the Claude subscription they
+already have, no API key. When you work on this codebase or run `/overboard`,
+hold this framing — it should shape naming, copy, and behavior:
 
-- **The user is the CTO.** They run many projects at once and don't have time to
-  read every diff. They want signal: what shipped, what's risky, what needs a
-  decision from them.
-- **The other Claude Code sessions are the engineering team.** They do the work
-  across the CTO's repos.
-- **The `/overboard` session is the CTO's assistant / chief of staff.** It watches
-  what the team ships (via hooks + Bitbucket commits), keeps the dashboard
-  current, and surfaces the few things worth the CTO's attention. It stays quiet
-  when nothing's happening.
+- **The user runs many projects at once** and doesn't have time to read every
+  diff. They want signal: what shipped, what's risky, what needs a decision.
+- **The other Claude Code sessions do the work** across the user's repos.
+- **The `/overboard` session is the user's assistant.** It watches what the
+  other sessions ship (via hooks + Bitbucket commits), keeps the dashboard
+  current, and surfaces the few things worth attention. It stays quiet when
+  nothing's happening.
 
-Prefer this vocabulary in code and copy: "CTO", "the team", "assistant",
-"report", "flag for review". Avoid "project manager" / "PM".
+Prefer this vocabulary in user-facing copy: "your sessions", "assistant",
+"report", "flag for review". Avoid "project manager" / "PM". **Public
+positioning (2026-09-01):** lead with the concrete job — scheduled, unattended
+Claude Code runs on your subscription, no API key, no cloud — and the morning
+report; do not pitch the product as "the CTO's assistant / chief of staff",
+"the manager", "the crew", or "a fleet" in marketing copy. Internal identifiers
+(`skills/cto-assistant`, prompt text in `commands/` and `agents/`) still use the
+older CTO vocabulary; that's fine — it's addressed to Claude, not customers.
 
 ## Architecture (two runtimes, one repo)
 
