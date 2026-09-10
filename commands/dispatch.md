@@ -20,8 +20,11 @@ Read the JSON file at `$ARGUMENTS`. `message.text` is what the CTO sent;
 lists the tasks Overboard has run for the CTO lately — each with `task_id`,
 `name`, `project`, `status` ("queued", "working…", "finished", "failed",
 "cancelled", …), a `summary` of what it produced, its `artifacts` (paths) and
-`finished_at`. Everything you need is in that file — do not go looking for
-chat credentials or history (there are none here by design).
+`finished_at`. `instructions` (optional) is the CTO's standing note for
+dispatched work — where things go, which folders or plugins to use, house
+rules. Use it when resolving the folder, plugins and time in steps 2–3.
+Everything you need is in that file — do not go looking for chat credentials
+or history (there are none here by design).
 
 ## 1b. New task, follow-up, or just a question?
 
@@ -100,6 +103,8 @@ count — anything else is dropped.
 - No added directions.
 - It's permitted to give context (repo/folder) and resolve paths to full form.
 - Overall you are to relay the message even if it is ambiguous, do not infer intent.
+- Don't copy `instructions` into the prompt: Overboard appends the standing
+  instructions to every task itself. They are context for your choices only.
 
 No hard newlines inside the prompt (the launcher may retype it into the
 terminal, where a newline submits early).
