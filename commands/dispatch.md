@@ -97,6 +97,20 @@ workspace with exactly those plugins enabled (on top of the user scope);
 with `[]` it runs straight in the project folder. Only ids from the list
 count — anything else is dropped.
 
+## 2c. Pick the model
+
+The request file's `models` array lists what a task can run on:
+`{key, label, provider}` — each provider's default (`"claude"`, `"codex"`) and
+every model the app can name (`"opus"`, `"sonnet"`, `"gpt-5.6-sol"`, …).
+(The dashboard's requests have no `models` list — then leave `model` out.)
+
+If the message names a model or a provider ("using Opus 5", "with Sonnet",
+"on Codex", "use Astra"), set `task.model` to the matching `key`. Otherwise
+omit it — the task runs on Claude with the CTO's default model. The prompt is
+still relayed as written. Codex tasks run right away only — with a Codex
+model, don't set a future `when`. A follow-up ignores `model`: a task
+continues on the provider it started with.
+
 ## 3. Relay the task prompt — don't rewrite it
 
 - Keep the CTO's wording.
@@ -127,13 +141,15 @@ Write this JSON — with your Write tool, to `response_path` **exactly**:
     "prompt": "<the CTO's message, relayed as one paragraph>",
     "when": "now",
     "timeout_minutes": 90,
-    "plugins": ["<plugin id from the request's plugins list>"]
+    "plugins": ["<plugin id from the request's plugins list>"],
+    "model": null
   },
   "reason": null
 }
 ```
 
-(`"version": 2` is fine too — both are read.) Don't add reporting
+(`"version": 2` is fine too — both are read. `"model"` is a `key` from the
+request's `models` list, or null.) Don't add reporting
 instructions to the prompt: Overboard appends its own result contract (a
 `result.json` the worker writes) so it can show the CTO the summary and send
 the files.
