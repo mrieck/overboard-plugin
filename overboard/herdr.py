@@ -36,6 +36,11 @@ FALLBACK_WORKSPACE = "Runs"
 AGENT_KIND = "claude"
 # How long Herdr itself waits for claude to become interactive (its cap is 300s).
 STARTUP_TIMEOUT_MS = 60_000
+# One agent.prompt round trip: Herdr holds the call until the agent takes
+# input, and a claude still loading plugins on a busy machine can need well
+# over the 15s default (a dispatch died that way on 2026-09-22 — the timeout
+# fired and the launch error path closed the pane under a healthy claude).
+PROMPT_TIMEOUT = 90.0
 # Marks the session as Overboard-scheduled so the plugin's launch_dashboard
 # doesn't pop a browser tab from inside a scheduled run.
 SESSION_ENV = {"OVERBOARD_NO_BROWSER": "1"}
@@ -233,7 +238,8 @@ def launch(cwd: str, name: str, prompt: str, ready_timeout: float = 45.0,
            "agent_name": agent.get("name") or aname}
     try:
         _wait_until_promptable(run["pane_id"], ready_timeout)
-        call("agent.prompt", {"target": run["agent_name"], "text": prompt})
+        call("agent.prompt", {"target": run["agent_name"], "text": prompt},
+             timeout=PROMPT_TIMEOUT)
         _ensure_prompt_submitted(run["pane_id"], prompt)
     except HerdrError:
         # The agent is up but wouldn't take the prompt — don't strand a live
