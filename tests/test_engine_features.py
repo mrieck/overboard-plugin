@@ -29,7 +29,8 @@ class _FakeHerdr:
         return ({"alive": False, "state": "ended"} if state == "gone"
                 else {"alive": True, "state": state})
 
-    def launch(self, cwd, name, prompt, ready_timeout=45.0, add_dirs=None):
+    def launch(self, cwd, name, prompt, ready_timeout=45.0, add_dirs=None, group=None):
+        self.last_group = group
         self.launches += 1
         self.calls.append(("launch", name, tuple(add_dirs or [])))
         return {"pane_id": f"p{self.launches}", "tab_id": f"t{self.launches}",
@@ -66,6 +67,7 @@ class _Base(unittest.TestCase):
         self.fake = _FakeHerdr()
         # Keep the HerdrError class reachable through the fake.
         self.fake.HerdrError = self._real_herdr.HerdrError
+        self.fake.workspace_label = self._real_herdr.workspace_label
         sched.herdr = self.fake
         self.s = sched.Scheduler()
         self.now = datetime.now()
@@ -242,7 +244,7 @@ class HistoryOpsTests(_Base):
 
 class EphemeralAndHooksTests(_Base):
     def test_ephemeral_run_never_touches_slots(self):
-        run = self.s.run_ephemeral({"name": "Overboard dispatch ab12", "cwd": str(self.cwd),
+        run = self.s.run_ephemeral({"name": "Dispatcher #ab12", "cwd": str(self.cwd),
                                     "prompt": "/overboard:dispatch /x", "timeout_minutes": 15,
                                     "add_dirs": [str(self.cwd), "/definitely/not/here"]})
         self.assertTrue(run["ephemeral"])
@@ -269,6 +271,20 @@ class EphemeralAndHooksTests(_Base):
         self.s._poll_run(active, self.now + timedelta(seconds=5))          # asks /exit
         self.s._poll_run(active, self.now + timedelta(seconds=5 + sched.EXIT_GRACE_SECS + 1))
         self.assertEqual(seen, [(run["id"], "completed")])
+
+    def test_runs_land_in_their_projects_herdr_workspace(self):
+        self.s.run_ephemeral({"name": "task", "cwd": str(self.cwd), "prompt": "go"})
+        self.s._pump()
+        # No override: the workspace is the project folder's name.
+        self.assertEqual(self.fake.last_group, "proj")
+        self.assertEqual(self.s._active[0]["herdr_group"], "proj")
+
+    def test_the_dispatchers_sessions_use_the_assistant_workspace(self):
+        self.s.run_ephemeral({"name": "Dispatcher #ab12", "cwd": str(self.cwd), "prompt": "go",
+                              "herdr_group": "Assistant"})
+        self.s._pump()
+        self.assertEqual(self.fake.last_group, "Assistant")
+        self.assertEqual(self.s._active[0]["herdr_group"], "Assistant")
 
     def test_failure_and_cancel_also_fire_the_hook(self):
         seen = []

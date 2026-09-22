@@ -33,7 +33,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from . import claudeplugins, promptcomplete, schedule, store
+from . import claudeplugins, herdr, promptcomplete, schedule, store
 
 DISPATCH_DIR = store.STATE_DIR / "dispatch"
 RESULT_FILE = "result.json"
@@ -364,7 +364,8 @@ class Dispatcher:
         # message text never rides in the command; only the request file's path.
         try:
             run = self.scheduler.run_ephemeral({
-                "name": f"Overboard dispatch {record['id']}",
+                "name": f"Dispatcher #{record['id']}",
+                "herdr_group": herdr.ASSISTANT_WORKSPACE,
                 "cwd": str(Path(run_dir).expanduser()),
                 "prompt": f"{DISPATCH_COMMAND} {self.request_path(record['id'])}",
                 "timeout_minutes": DISPATCHER_TIMEOUT_MINUTES})
@@ -462,7 +463,7 @@ class Dispatcher:
         try:
             task_dir = self._ensure_task_dir(target["id"])
             run = self.scheduler.run_ephemeral({
-                "name": f"Dispatch: {target.get('task_name') or 'Task'}",
+                "name": target.get("task_name") or "Task",
                 "cwd": target["project_path"],
                 "prompt": with_result_contract(rebuilt_prompt(target, prompt), task_dir),
                 "timeout_minutes": target.get("timeout_minutes") or DEFAULT_TASK_TIMEOUT_MINUTES,
@@ -536,7 +537,9 @@ class Dispatcher:
                        "project_path": path, "task_name": name, "prompt": prompt.strip(),
                        "task_dir": task_dir, "workspace_plugins": plugins,
                        "timeout_minutes": timeout})
-        spec = {"name": f"Dispatch: {name}", "cwd": path,
+        # The task's name is the slot name — the Herdr tab label and the
+        # agent-name slug; the run lands in the project's workspace.
+        spec = {"name": name, "cwd": path,
                 "prompt": with_result_contract(prompt, task_dir),
                 "timeout_minutes": timeout, "add_dirs": [task_dir] if task_dir else []}
         try:

@@ -7,8 +7,12 @@ Wire protocol: NDJSON over a Unix domain socket. One request line
 connection after answering (only events.subscribe streams — not used here).
 
 Launch semantics (mirrors HerdrLauncher, including its live-debugged gotchas):
-one reusable workspace labelled "Overboard", one tab per run, `agent.start`
-kind "claude" with --permission-mode auto (never `claude -p`). `agent.start`
+one workspace per project labelled after the project folder (the assistant's
+own sessions share an "Assistant" workspace), one tab per run labelled after
+the task, `agent.start` kind "claude" with --permission-mode auto (never
+`claude -p`). Unlike the Mac app this runs in the user's default Herdr session,
+so a project workspace may be one the user already has open for that repo;
+Overboard only ever closes tabs it created (matched by its own run labels). `agent.start`
 returns while `launch_pending` is still true and prompts are rejected with
 agent_not_ready until it clears — poll `agent.get` before `agent.prompt`.
 `pane.read` nests its payload under result["read"].
@@ -25,7 +29,10 @@ import time
 import uuid
 from pathlib import Path
 
-WORKSPACE_LABEL = "Overboard"
+# Workspace for sessions that belong to no project (the dispatcher).
+ASSISTANT_WORKSPACE = "Assistant"
+# Workspace for a run whose project folder can't be named.
+FALLBACK_WORKSPACE = "Runs"
 AGENT_KIND = "claude"
 # How long Herdr itself waits for claude to become interactive (its cap is 300s).
 STARTUP_TIMEOUT_MS = 60_000
@@ -128,6 +135,14 @@ def ensure_server() -> None:
     raise HerdrUnreachable("started `herdr server` but its socket never came up")
 
 
+def workspace_label(project_dir: str) -> str:
+    """The Herdr workspace a run in `project_dir` lands in: the folder's own
+    name. For a task-workspace run pass the real project, not the
+    ~/OverboardWork/<project>/<task> launch dir."""
+    name = os.path.basename((project_dir or "").strip().rstrip("/"))
+    return name or FALLBACK_WORKSPACE
+
+
 def agent_name(slot_name: str) -> str:
     """Herdr agent names are identifiers, not prose: slug + short suffix so two
     runs of one slot don't collide."""
@@ -136,18 +151,28 @@ def agent_name(slot_name: str) -> str:
     return f"{name or 'run'}-{uuid.uuid4().hex[:4]}"
 
 
-def _pane_for_run(cwd: str, label: str) -> dict:
-    """A pane at a shell prompt in `cwd` inside the Overboard workspace
-    (created if the user closed it between runs)."""
+def _pane_for_run(cwd: str, label: str, group: str) -> dict:
+    """A pane at a shell prompt in `cwd`, in a tab labelled `label` inside the
+    workspace labelled `group` (created if it isn't there — a workspace goes
+    away with its last tab)."""
     workspaces = call("workspace.list").get("workspaces") or []
-    match = next((w for w in workspaces if w.get("label") == WORKSPACE_LABEL), None)
+    match = next((w for w in workspaces if w.get("label") == group), None)
     if match:
         tab = call("tab.create", {"workspace_id": match["workspace_id"],
                                   "label": label, "cwd": cwd,
                                   "env": SESSION_ENV, "focus": False})
         return tab["root_pane"]
-    created = call("workspace.create", {"label": WORKSPACE_LABEL, "cwd": cwd,
+    created = call("workspace.create", {"label": group, "cwd": cwd,
                                         "env": SESSION_ENV, "focus": False})
+    # workspace.create takes no tab label, so the root tab would carry a
+    # generated name — and it is the first run of every project. Display
+    # only: a refused rename doesn't cost the run.
+    tab_id = (created.get("tab") or {}).get("tab_id")
+    if tab_id:
+        try:
+            call("tab.rename", {"tab_id": tab_id, "label": label})
+        except HerdrError:
+            pass
     return created["root_pane"]
 
 
@@ -172,13 +197,15 @@ def _wait_until_promptable(pane_id: str, timeout: float) -> None:
 
 
 def launch(cwd: str, name: str, prompt: str, ready_timeout: float = 45.0,
-           add_dirs: "list | None" = None) -> dict:
-    """Start an unattended claude in a fresh tab and submit `prompt`. Returns
-    {pane_id, tab_id, workspace_id, agent_name}. `add_dirs` are granted to the
-    session via `--add-dir` (a dispatched task's result folder)."""
+           add_dirs: "list | None" = None, group: "str | None" = None) -> dict:
+    """Start an unattended claude in a fresh tab labelled `name` inside the
+    workspace labelled `group` (default: the cwd's folder name) and submit
+    `prompt`. Returns {pane_id, tab_id, workspace_id, agent_name}. `add_dirs`
+    are granted to the session via `--add-dir` (a dispatched task's result
+    folder)."""
     ensure_server()
     aname = agent_name(name)
-    pane = _pane_for_run(cwd, name)
+    pane = _pane_for_run(cwd, name, group or workspace_label(cwd))
     args = ["--permission-mode", "auto"]
     for d in add_dirs or []:
         if d:

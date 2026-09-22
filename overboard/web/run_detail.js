@@ -115,7 +115,7 @@ function liveRunCard(body, run) {
     ["Workspace", run.workspace_id ? "linked task workspace" : null],
     ["Command", _commandLine(run), true],
     ["Session", run.session_id ? run.session_id.slice(0, 8) + "…" : "not yet claimed from the hooks", true],
-    ["Herdr", run.agent_name ? `${run.agent_name} · pane ${String(run.pane_id || "").slice(0, 8)}` : null, true],
+    ["Herdr", run.agent_name ? `${run.herdr_group ? run.herdr_group + " · " : ""}${run.agent_name} · pane ${String(run.pane_id || "").slice(0, 8)}` : null, true],
     ["Timeout", `${run.timeout_minutes} min`],
   ]));
   if (run.state !== "queued") {

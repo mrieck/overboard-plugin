@@ -141,7 +141,8 @@ def pending_work(state: dict, ai: dict) -> dict:
     there are new Stop/SubagentStop events since the last digest, and fresh
     **panels** when a local repo has no agent panels yet (or its recorded HEAD
     went stale). Returns ``{"items", "first_run", "heavy_budget", "deferred",
-    "notice"}`` — heavy work (panels + first-ever reviews) is granted to at
+    "notice", "launches"}`` (``launches``: every active launch with its
+    countdown, for the report's Direction lines) — heavy work (panels + first-ever reviews) is granted to at
     most HEAVY_BUDGET projects per HEAVY_COOLDOWN_SECS window; the rest keep
     only their cheap flags and are marked ``deferred_heavy``. Items are
     newest-activity first."""
@@ -156,6 +157,27 @@ def pending_work(state: dict, ai: dict) -> dict:
     # over, so a still-open deadline doesn't spam the loop every 30 minutes.
     midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
     flagged_today = _slugs_flagged_since(midnight.timestamp())
+
+    # Every active launch, whether or not its project moved: the report gives
+    # each one a one-line read every pass (the per-item `launch` below only
+    # rides along with projects that have pending work).
+    launches = []
+    for name in state.get("projects", {}):
+        launch = (context.get(name) or {}).get("active_launch")
+        if not launch:
+            continue
+        status, days = _launch_status(launch)
+        launches.append({
+            "project": name,
+            "type": launch.get("type", ""),
+            "title": launch.get("title", ""),
+            "action": launch.get("action", ""),
+            "target_date": launch.get("target_date", ""),
+            "days_until": days,
+            "status": status,
+            "goals": launch.get("goals", ""),
+        })
+    launches.sort(key=lambda l: (l["days_until"] is None, l["days_until"] or 0))
 
     out = []
     for name, p in state.get("projects", {}).items():
@@ -301,7 +323,7 @@ def pending_work(state: dict, ai: dict) -> dict:
                 "(budget %d per %d min); they'll be picked up on later passes."
                 % (len(deferred), HEAVY_BUDGET, HEAVY_COOLDOWN_SECS // 60))
     return {"items": out, "first_run": first_run, "heavy_budget": HEAVY_BUDGET,
-            "deferred": deferred, "notice": notice}
+            "deferred": deferred, "notice": notice, "launches": launches}
 
 
 def _grouping_todo(state: dict, ai: dict) -> dict | None:

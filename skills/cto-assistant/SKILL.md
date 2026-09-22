@@ -23,10 +23,12 @@ that's the whole point.
 Run this each pass (it's what `/overboard` and the `/loop` call do):
 
 1. **`get_pending_work()`** — your to-do list. It returns `{items, first_run,
-   heavy_budget, deferred, notice}`; each item has `project`, its repo `repos`
-   (slugs), and the `need_*` flags. **If `items` is empty, stop — nothing
-   changed, don't spend a turn.** If `notice` is non-empty, **relay it to the
-   CTO** in your reply. **Never call `get_pending_work` a second time within a
+   heavy_budget, deferred, notice, launches}`; each item has `project`, its repo
+   `repos` (slugs), and the `need_*` flags; `launches` is every active launch
+   across projects (with `days_until`, `status`, `goals`) whether or not code
+   moved — context for the report, not a list to comment on. **If `items` is empty,
+   nothing changed — skip straight to the report; don't spend a turn on work.**
+   If `notice` is non-empty, **relay it to the CTO** in your reply. **Never call `get_pending_work` a second time within a
    pass** — the heavy-work budget is per-window; re-calling won't grant more
    slots (see *First run & the heavy-work budget* below).
 2. **Grouping first.** If the list includes a `{kind:"grouping", need_grouping:true,
@@ -68,7 +70,11 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
    Do NOT flag "added feature X" / "did the task" — the CTO requested that work
    and already knows what was built. If nothing clears that bar, flag nothing.
 
-Then you're done. Overboard runs **on demand**, not as a permanent heartbeat.
+Then write the **morning report** (the closing message — its exact shape is in
+the `/overboard` command: opening sentence, *Shipped*, *Ran since last report*
+from `get_recent_runs`, *Direction* when a launch deserves a word, *Needs you*;
+no URL, browser, loop or on-demand talk). Overboard runs **on demand**, not as a
+permanent heartbeat.
 Under `/loop`, keep looping **only while there's a backlog to drain** — projects
 still `deferred` (waiting for a heavy-work slot), or pending work left to write —
 and **stop the loop once the board is caught up**: a pass with nothing to do (or
@@ -215,6 +221,23 @@ Use it to make your output *matter to the CTO*:
   for exactly this window (even on a silent project), so you'll be prompted — but
   the judgement of whether to flag is still yours.
 - If there's no launch or vision set, just skip this — don't invent goals.
+- `get_pending_work().launches` hands you every active launch each pass as
+  context. Mention one in the report's *Direction* section when you have
+  something to say — at risk given what shipped and the runs in
+  `get_recent_runs` (a scheduled "Write a blog" run that completed counts toward
+  a content goal), slipped, close, or clearly moved by this pass's work. It is
+  your call which ones, if any. A flag is still reserved for the ≤ 7-day /
+  overdue window.
+
+## What the scheduler ran (`get_recent_runs`)
+
+`get_recent_runs()` returns `{since, previous_report_at, runs}` — the finished
+scheduled slots and dispatched tasks since the previous sweep, newest first,
+each `{name, project, kind, outcome, finished_at}`. Titles only, by design: the
+CTO wants you *aware* that "Write a blog for tryoverboard.com" ran or that the
+directory-posting task timed out, not to re-read their output. List them by
+project in the report's *Ran since last report* section and let them inform the
+Direction lines. Sweeps and dispatcher sessions are already filtered out.
 
 ## Plugin inventory (`get_plugin_inventory`)
 
@@ -280,4 +303,7 @@ lead with. No launch set → say nothing about it.
 - `get_*` MCP tools are the preferred interface. Underneath: dashboard state is
   `~/.cache/overboard/state.json` (don't write it); your output goes to
   `~/.cache/overboard/ai.json` via the `set_*`/`record_*` tools; raw events are
-  `~/.cache/overboard/events.jsonl` (append-only).
+  `~/.cache/overboard/events.jsonl` (append-only); run history behind
+  `get_recent_runs` is the scheduler's `~/.cache/overboard/scheduler/runs.json`
+  plus the Mac app's `~/Library/Application Support/Overboard/runs/` (both
+  read-only to you).

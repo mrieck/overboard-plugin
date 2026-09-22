@@ -85,7 +85,9 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
   sidebar). Written only by the dashboard's `Api` (get_context/set_active_launch/
   update_active_launch/pushback_launch/complete_launch/save_vision/
   set_project_status); the agent **reads** it via the MCP
-  `get_project_context` tool but never writes. One active launch per project;
+  `get_project_context` tool (which also returns `status`/`display`) but never
+  writes; `get_pending_work` lists every active launch in `launches` so the
+  sweep's report can give each one a Direction line. One active launch per project;
   completed ones move to `past_launches`.
 - `events.jsonl` — append-only (hooks + flags/status). Safe by construction.
   The dashboard compacts it in the background (`events.maybe_compact`): 30-day
@@ -96,7 +98,9 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
 - `scheduler/` (slots.json, runs.json, active.json, queue.json, transcripts/) —
   **dashboard-owned**: written only by the scheduler thread inside the dashboard
   process (`overboard/scheduler.py`, started post-bind in `run_dashboard`); the
-  MCP server and hooks never touch it. It only *reads* `events.jsonl`: a run
+  MCP server only *reads* `runs.json` (plus the Mac app's run records) through
+  `overboard/runhistory.py` for the `get_recent_runs` tool, and hooks never
+  touch it. The scheduler itself only *reads* `events.jsonl`: a run
   claims its SessionStart (by cwd, near launch), then a Stop/SessionEnd for that
   session with no subagent in flight marks it complete (`overboard/runmatch.py`,
   a port of the Mac app's RunMatcher — pure, unit-tested in `tests/`). Distinct

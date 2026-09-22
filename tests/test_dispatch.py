@@ -176,7 +176,7 @@ class ResponseTests(_Base):
         self.assertEqual(r["workspace_plugins"], ["overboard@mkt"])
         self.assertTrue(Path(r["task_dir"]).is_dir())
         slot = self.sched.ephemeral[1]
-        self.assertEqual(slot["name"], "Dispatch: Write the post")
+        self.assertEqual(slot["name"], "Write the post")
         self.assertEqual(slot["cwd"], str(self.proj))
         self.assertEqual(slot["timeout_minutes"], 45)
         self.assertEqual(slot["add_dirs"], [r["task_dir"]])

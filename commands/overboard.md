@@ -7,12 +7,13 @@ Claude Code sessions working across their repos are the engineering team, and yo
 report on what they ship. Load the `cto-assistant` skill — it has the exact
 routine and writing style. Then:
 
-## 1. Open the dashboard
+## 1. Start the dashboard (silently)
 
-Call the Overboard MCP tool **`launch_dashboard`**. It starts the dashboard and
-returns a URL — share it with the user and tell them to open it in a browser
-(it may open automatically). If the tool isn't available, the Overboard MCP
-server isn't connected — tell the user to check `/mcp`, and stop.
+Call the Overboard MCP tool **`launch_dashboard`**. It starts the dashboard
+server if it isn't running. **Do not mention the URL, the browser, or the
+tool's note in your report** — the Overboard Mac app or the already-open tab is
+showing the board. If the tool isn't available, the Overboard MCP server isn't
+connected — tell the user to check `/mcp`, and stop.
 
 ## 2. Run one full update pass now
 
@@ -26,6 +27,11 @@ user directly** — e.g. "First run: I analyzed 2 of 9 projects in depth; the
 dashboard fills in over the next few passes." You are the brain — do the
 inference yourself; never call an external API.
 
+Also call **`get_recent_runs`** once: it lists the scheduled slots and
+dispatched tasks that finished since the previous report (titles only). They
+go in the report's *Ran since last report* section and count as "finished work"
+when you judge a launch's goals.
+
 ## 3. Drain the backlog, then STOP — don't idle-poll
 
 Overboard is meant to be run **on demand** at the start of a work session, not to
@@ -37,8 +43,7 @@ subscription for nothing (their team's work lands over hours-to-days, not
 minutes).
 
 - **If your step-2 pass left nothing `deferred` and nothing else pending, you're
-  already done.** Tell the user the board is up to date and **do not start a
-  loop.**
+  already done** — write the report (step 4) and **do not start a loop.**
 - **If projects were `deferred` (or work is still pending), drain the backlog:**
   invoke the `/loop` skill with **no interval** (self-paced) and the prompt
   below. It processes a pass and **self-terminates the moment the board is caught
@@ -54,7 +59,33 @@ minutes).
 > only items are `need_launch` reminders (no code moved) counts as caught up —
 > the launch countdowns already show in the sidebar, so never wake just for them.
 
-Then tell the user the dashboard is open and whether the board is caught up now
-or filling in over the next few passes. Make clear Overboard runs **on demand**:
-they can re-run `/overboard` any time for a fresh sweep, and no background loop is
-left running against their subscription.
+## 4. Write the morning report
+
+Your closing message **is** the report — the Mac app shows it as the latest
+"Morning report" and lists its first line in the history, so the first line must
+carry the substance. The shape below is a guide, not a checklist: you decide
+what is worth the CTO's attention this pass, and you leave out anything that
+isn't. Loose rules on purpose.
+
+1. **One opening sentence** with the substance of the pass ("Six projects
+   shipped, StartFlow needs an API deploy before TestFlight."). When no project
+   changed, the sentence is exactly: `Nothing shipped since the last report.`
+2. `**Shipped**` — one bullet per project that moved: what landed, in the
+   digest's words. Omit when nothing moved.
+3. `**Ran since last report**` — from `get_recent_runs`: one line per project,
+   listing the task titles, `✓` for a completed run and `✕ … (timeout)` /
+   `(launch failed)` for a failed one. Omit when there are no runs.
+4. `**Direction**` — optional. `get_pending_work().launches` (every active
+   launch, with `days_until` and `goals`) is context for the whole report, not a
+   list to comment on: mention a launch when you have something to say — it's
+   at risk given what shipped and ran, it slipped, it's close, or the work this
+   pass clearly moved it. Quiet, on-track launches can go unmentioned. If no
+   launch is set anywhere, you may say so once. Never invent goals.
+5. `**Needs you**` — the flags you raised this pass, one line each. Omit when
+   you flagged nothing.
+
+Keep heading lines as `**Bold**` and under 48 characters. **Never include:** the
+dashboard URL, anything about a browser tab, whether a loop was or wasn't
+started, "Overboard runs on demand", tool names, or a note that nothing was
+deferred. If `notice` was non-empty, its one sentence goes right after the
+opening line.

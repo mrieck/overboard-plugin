@@ -273,6 +273,9 @@ class Scheduler:
                "outcome": outcome, "reason": reason, "completion_message": None,
                "transcript_file": None,
                "workspace_id": slot.get("workspace_id"),
+               # Herdr workspace override (the dispatcher's sessions); a run
+               # without one lands in its project's workspace at launch.
+               "herdr_group": slot.get("herdr_group"),
                "timeout_minutes": slot.get("timeout_minutes") or DEFAULT_TIMEOUT_MINUTES,
                "stall_minutes": slot.get("stall_minutes") or DEFAULT_STALL_MINUTES,
                "add_dirs": list(slot.get("add_dirs") or []),
@@ -303,12 +306,16 @@ class Scheduler:
     def _begin_run(self, run: dict) -> None:
         # A workspace-linked run re-resolves the workspace at fire time — a
         # deleted/moved workspace fails loudly instead of running in a ghost dir.
+        group = run.get("herdr_group")
         if run.get("workspace_id"):
             ws = workspaces.workspace_by_id(run["workspace_id"])
             if ws is None:
                 return self._record_failure(
                     run, "the linked task workspace no longer exists")
             run["cwd"] = ws["path"]
+            # The run launches in ~/OverboardWork/<project>/<task>; its Herdr
+            # workspace is the project's.
+            group = group or ws.get("project")
         cwd = run["cwd"]
         cache_root = runmatch.normalize_path(str(store.STATE_DIR))
         plugins_root = runmatch.normalize_path(str(Path.home() / ".claude" / "plugins"))
@@ -328,9 +335,11 @@ class Scheduler:
         # (symlinks, /tmp vs /private/tmp) on both sides — see runmatch.
         run["cwd"] = str(Path(cwd).expanduser())
         run["session_id"] = None  # claimed from the SessionStart hook once seen
+        run["herdr_group"] = group or herdr.workspace_label(run["cwd"])
         try:
             launched = herdr.launch(run["cwd"], run["slot_name"], run["prompt"],
-                                    add_dirs=run.get("add_dirs") or None)
+                                    add_dirs=run.get("add_dirs") or None,
+                                    group=run["herdr_group"])
         except herdr.HerdrError as e:
             return self._record_failure(run, e.message or str(e))
         # herdr's result has its own workspace_id (a pane-tree id) — don't let
@@ -750,7 +759,8 @@ class Scheduler:
                   "stall_minutes": self._clean_minutes(
                       slot.get("stall_minutes"), DEFAULT_STALL_MINUTES, 1, 120),
                   "add_dirs": self._clean_add_dirs(slot.get("add_dirs")),
-                  "workspace_id": None}
+                  "workspace_id": None,
+                  "herdr_group": (slot.get("herdr_group") or "").strip() or None}
         run = self._run_record(pseudo, "manual")
         with self._lock:
             self._queue.append(run)
