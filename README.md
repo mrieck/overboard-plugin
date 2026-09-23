@@ -1,4 +1,4 @@
-![Overboard — Shipping too much? You need to go Overboard.](docs/overboard_banner.png)
+![Overboard — Too many agents to manage? You need to go Overboard.](docs/overboard_banner.png)
 
 Overboard is a Claude Code plugin that watches every Claude Code session across
 all your repos and reports what shipped — on the Claude subscription you already
