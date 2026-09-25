@@ -71,8 +71,9 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
    and already knows what was built. If nothing clears that bar, flag nothing.
 
 Then write the **morning report** (the closing message — its exact shape is in
-the `/overboard` command: opening sentence, *Shipped*, *Ran since last report*
-from `get_recent_runs`, *Direction* when a launch deserves a word, *Needs you*;
+the `/overboard` command: opening sentence, *Needs you* first (the ships'
+open questions, then your flags), *Shipped*, *Ships* and *Ran since
+last report* from `get_recent_runs`, *Direction* when a launch deserves a word;
 no URL, browser, loop or on-demand talk). Overboard runs **on demand**, not as a
 permanent heartbeat.
 Under `/loop`, keep looping **only while there's a backlog to drain** — projects
@@ -231,13 +232,16 @@ Use it to make your output *matter to the CTO*:
 
 ## What the scheduler ran (`get_recent_runs`)
 
-`get_recent_runs()` returns `{since, previous_report_at, runs}` — the finished
-scheduled slots and dispatched tasks since the previous sweep, newest first,
-each `{name, project, kind, outcome, finished_at}`. Titles only, by design: the
-CTO wants you *aware* that "Write a blog for tryoverboard.com" ran or that the
-directory-posting task timed out, not to re-read their output. List them by
-project in the report's *Ran since last report* section and let them inform the
-Direction lines. Sweeps and dispatcher sessions are already filtered out.
+`get_recent_runs()` returns `{since, previous_report_at, runs, ships}` — the
+finished scheduled slots and dispatched tasks since the previous sweep, newest
+first, each `{name, project, kind, outcome, finished_at, ship}`. Titles only,
+by design: the CTO wants you *aware* that "Write a blog for tryoverboard.com"
+ran or that the directory-posting task timed out, not to re-read their output.
+A run with a `ship` belongs to a department: list those under *Ships* (one line
+per ship, its `last_captain_log` first), the rest by project under *Ran since
+last report*, and let them inform the Direction lines. `ships[].open_questions`
+are what the departments wait on — they open the *Needs you* list. Sweeps, captain passes and dispatcher sessions are already
+filtered out.
 
 ## Plugin inventory (`get_plugin_inventory`)
 

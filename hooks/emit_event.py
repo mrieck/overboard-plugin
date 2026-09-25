@@ -3,24 +3,27 @@
 
 Runs under the system python for EVERY working Claude session (async), so it is
 deliberately stdlib-only, fast, and failure-proof — it never imports the
-overboard package (which needs third-party deps), never raises, and always
-exits 0 so it can never block or delay the Claude it's observing.
+overboard package, never raises, and always exits 0 so it can never block or
+delay the Claude it's observing.
 
 Stdin is the Claude Code hook JSON. We record only cheap, non-sensitive signal:
 the event type, session, cwd, the model's closing message (truncated), and — for
-tool events — the file path or truncated command target. The dashboard/manager
+tool events — the file path or truncated command target. A session the Mac app
+launched carries OVERBOARD_RUN_ID in its environment; it rides along as
+`run_id` so the app can match the session to its run exactly. The dashboard/manager
 (running in the real venv) maps cwd -> repo and does any summarization later.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 EVENTS_PATH = Path.home() / ".cache" / "overboard" / "events.jsonl"
-_MAX_MSG = 4000
+_MAX_MSG = 16000
 _MAX_CMD = 160
 
 
@@ -50,6 +53,9 @@ def main() -> int:
         "session_id": data.get("session_id"),
         "cwd": data.get("cwd"),
     }
+    run_id = os.environ.get("OVERBOARD_RUN_ID")
+    if run_id:
+        evt["run_id"] = run_id
     msg = data.get("last_assistant_message")
     if isinstance(msg, str) and msg:
         evt["last_message"] = msg[:_MAX_MSG]

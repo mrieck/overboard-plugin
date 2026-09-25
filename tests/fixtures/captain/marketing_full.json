@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "captain_run_id": "c7f2a1b9",
+  "log_entry": "Directories: 3 done overnight, 7 to go. Meme task timed out again (90 min); re-running with a 30-min cap.",
+  "memory_updated": true,
+  "actions": [
+    {"type": "create_task", "title": "Meme: Claude eats my tokens", "prompt": "OBJECTIVE: one meme. OUTPUT: a PNG. TOOLS: /memebrew:make-meme. BOUNDARIES: one meme, no posting.", "project_path": "/Users/x/Sites/memebrew", "plugins": ["memebrew@memebrew-dev"], "model": null, "when": "now", "timeout_minutes": 30, "priority": 1, "goal_id": "g1", "reason": "goal g1: today's meme"},
+    {"type": "create_agent", "name": "Directory submissions (nightly)", "cwds": ["/Users/x/Sites/socialcue"], "command": "/socialcue:socialcue-post next 3 directories", "schedule": {"kind": "daily", "times": [{"hour": 2, "minute": 0}]}, "plugins": "socialcue@socialcue", "timeout_minutes": 90, "enabled": true, "goal_id": "g3", "reason": "nightly until done"},
+    {"type": "update_agent", "id": "A2", "changes": {"enabled": false}, "reason": "replaced"},
+    {"type": "question", "text": "**Can I spend ScrapeCreators credits on trend research?**\n\n- Yes, up to 200/week\n- No", "options": ["Yes, up to 200/week", "No"], "blocking": false, "about": {"kind": "goal", "id": "g2"}, "reason": "ship rule"},
+    {"type": "goal_progress", "goal_id": "g3", "note": "3 of 10 directories", "status": "active", "reason": "from run R91"},
+    {"type": "note", "text": "Product Hunt login confirmed.", "reason": "answered Q3"}
+  ]
+}

@@ -23,7 +23,11 @@ lists the tasks Overboard has run for the CTO lately — each with `task_id`,
 `finished_at`. `instructions` (optional) is the CTO's standing note for
 dispatched work — where things go, which folders or plugins to use, house
 rules. Use it when resolving the folder, plugins and time in steps 2–3.
-Everything you need is in that file — do not go looking for chat credentials
+`ships` (optional) lists the CTO's departments — `{id, name, mission,
+plugins, agents, status}` — and `one_off_ship_id` is the ship for tasks no
+department claims. Ships are departments, not folder owners: Marketing may
+work in any project. `ship_hint` (optional) is the ship the CTO picked by
+hand. Everything you need is in that file — do not go looking for chat credentials
 or history (there are none here by design).
 
 ## 1b. New task, follow-up, or just a question?
@@ -41,8 +45,9 @@ Decide which of three things the message is:
   exists (the Mac app), else runs a fresh session seeded with what the task
   did and made. Skip steps 2–3.
 - **A question the ledger answers** ("did the meme finish?", "what did the blog
-  task make?", "what's running?") — answer it yourself from `recent_tasks`
-  with `"action": "reply"` and the answer in `"text"`. Nothing runs.
+  task make?", "what's running?", "status of the Marketing ship?") — answer it
+  yourself from `recent_tasks` (or `ships[].status`) with `"action": "reply"`
+  and the answer in `"text"`. Nothing runs.
 - **Anything else that is a task** → a new task: continue with step 2.
 - **None of the above** (a greeting, small talk, a question the ledger can't
   answer) → `"action": "reject"`.
@@ -82,6 +87,16 @@ Write a **`reject`** response (schema below) and stop only if:
 
 Never place a task outside `root_folder` unless `list_projects` gave you that
 path.
+
+## 2a. Pick the ship
+
+When the request has `ships`, put in `ship_id` the first that fits: `ship_hint`
+if set; a ship the message names ("Marketing, make a meme…"); the ship whose
+`mission` the task serves (a post or a meme is Marketing's whatever repo it
+touches); the ship whose `plugins` or `agents` cover the command the task
+uses; else `one_off_ship_id`. The folder from step 2 says nothing about the
+ship. Never reject over an unclear ship — One-off is fine. No `ships` in the
+request → leave `ship_id` out.
 
 ## 2b. Pick the plugins the task needs
 
@@ -135,6 +150,7 @@ Write this JSON — with your Write tool, to `response_path` **exactly**:
   "version": 1,
   "dispatch_id": "<dispatch_id from the request>",
   "action": "create_task",
+  "ship_id": "<id from the request's ships, or one_off_ship_id>",
   "project": { "name": "<project or folder name>", "path": "/absolute/local/path", "create": false },
   "task": {
     "name": "<short task name, a few words>",

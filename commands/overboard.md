@@ -70,19 +70,24 @@ isn't. Loose rules on purpose.
 1. **One opening sentence** with the substance of the pass ("Six projects
    shipped, StartFlow needs an API deploy before TestFlight."). When no project
    changed, the sentence is exactly: `Nothing shipped since the last report.`
-2. `**Shipped**` — one bullet per project that moved: what landed, in the
+2. `**Needs you**` — first, one list: every open question from
+   `get_recent_runs().ships` (one line each, the ship's name first), then the
+   flags you raised this pass. Omit when empty.
+3. `**Shipped**` — one bullet per project that moved: what landed, in the
    digest's words. Omit when nothing moved.
-3. `**Ran since last report**` — from `get_recent_runs`: one line per project,
+4. `**Ships**` — from `get_recent_runs().ships` and the runs that carry a
+   `ship`: one line per ship, its `last_captain_log` first, then that ship's
+   run titles with `✓` / `✕ … (timeout)`. Omit ships with nothing to say; omit
+   the section when there are none.
+5. `**Ran since last report**` — the runs with no `ship`: one line per project,
    listing the task titles, `✓` for a completed run and `✕ … (timeout)` /
-   `(launch failed)` for a failed one. Omit when there are no runs.
-4. `**Direction**` — optional. `get_pending_work().launches` (every active
+   `(launch failed)` for a failed one. Omit when there are no such runs.
+6. `**Direction**` — optional. `get_pending_work().launches` (every active
    launch, with `days_until` and `goals`) is context for the whole report, not a
    list to comment on: mention a launch when you have something to say — it's
    at risk given what shipped and ran, it slipped, it's close, or the work this
    pass clearly moved it. Quiet, on-track launches can go unmentioned. If no
    launch is set anywhere, you may say so once. Never invent goals.
-5. `**Needs you**` — the flags you raised this pass, one line each. Omit when
-   you flagged nothing.
 
 Keep heading lines as `**Bold**` and under 48 characters. **Never include:** the
 dashboard URL, anything about a browser tab, whether a loop was or wasn't

@@ -119,3 +119,64 @@ class RecentRunsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SqliteRunsTests(unittest.TestCase):
+    """The Mac app's database, read read-only; the JSON scan is the fallback."""
+
+    def setUp(self):
+        import sqlite3
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.plugin = root / "runs.json"
+        self.plugin.write_text(json.dumps({"version": 1, "runs": []}))
+        self.mac = root / "mac"
+        self.mac.mkdir()
+        self.db = root / "overboard.sqlite"
+        conn = sqlite3.connect(self.db)
+        conn.executescript((Path(__file__).resolve().parents[1] / "overboard" / "sql" / "schema_v1.sql").read_text())
+        self.now = datetime.now().replace(microsecond=0)
+        t = self.now.timestamp()
+        conn.execute("INSERT INTO ships VALUES ('S1','Marketing','marketing',NULL,1,0,NULL,?,?,'{}')", (t, t))
+        conn.execute("INSERT INTO ships VALUES ('S0','One-off','one-off','one_off',1,99,NULL,?,?,'{}')", (t, t))
+        rows = [
+            ("R1", "A1", "Social discovery", "scheduled", "S1", "completed", t - 7200, t - 3600, 0),
+            ("R2", "A2", "Meme", "dispatch", "S1", "timeout", t - 5400, t - 1800, 0),
+            ("R3", "A3", "Nightly", "scheduled", None, "completed", t - 4000, t - 900, 0),
+            ("R4", "A4", "Captain · Marketing", "captain", "S1", "completed", t - 2000, t - 600, 0),
+            ("R5", "A5", "Morning report", "system", None, "completed", t - 40000, t - 39000, 0),
+            ("R6", "A6", "Hidden", "scheduled", "S1", "completed", t - 3000, t - 2000, 1),
+        ]
+        for rid, aid, name, kind, ship, outcome, started, ended, hidden in rows:
+            conn.execute("""INSERT INTO runs (id, agent_id, agent_name, agent_kind, ship_id, trigger, cwd, started_at,
+                            ended_at, outcome, hidden, payload, summary)
+                            VALUES (?,?,?,?,?,'scheduled','/Users/x/Sites/proj',?,?,?,?,'{"command":"/x"}',?)""",
+                         (rid, aid, name, kind, ship, started, ended, outcome, hidden,
+                          "Directories: 3 done, 7 to go.\nMore." if kind == "captain" else None))
+        conn.execute("""INSERT INTO work_items VALUES ('W1','S1','blocked','captain',NULL,NULL,?,?,NULL,?)""",
+                     (t, t, json.dumps({"title": "Spend credits?", "humanQA": [{"question": "**Spend credits?**\nmore"}]})))
+        conn.execute("""INSERT INTO work_items VALUES ('W2','S1','proposed','captain',NULL,NULL,?,?,NULL,?)""",
+                     (t, t, json.dumps({"title": "New agent: Nightly directories"})))
+        conn.commit()
+        conn.close()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_reads_runs_and_ships_from_the_database(self):
+        out = runhistory.recent_runs(now=self.now, plugin_path=self.plugin, mac_dir=self.mac, mac_db=self.db)
+        names = [(r["name"], r["kind"], r["ship"]) for r in out["runs"]]
+        self.assertEqual(names, [("Nightly", "scheduled", None), ("Meme", "task", "Marketing"),
+                                 ("Social discovery", "scheduled", "Marketing")])
+        self.assertEqual(out["runs"][1]["outcome"], "timeout")
+        ships = out["ships"]
+        self.assertEqual([s["name"] for s in ships], ["Marketing"])   # One-off with nothing pending is left out
+        self.assertEqual(ships[0]["last_captain_log"], "Directories: 3 done, 7 to go.")
+        self.assertEqual(ships[0]["open_questions"], ["**Spend credits?**"])
+        self.assertNotIn("pending_proposals", ships[0])
+
+    def test_missing_database_falls_back_to_json(self):
+        out = runhistory.recent_runs(now=self.now, plugin_path=self.plugin, mac_dir=self.mac,
+                                     mac_db=Path(self._tmp.name) / "nope.sqlite")
+        self.assertEqual(out["runs"], [])
+        self.assertEqual(out["ships"], [])
