@@ -24,16 +24,23 @@ The request has everything: `ship` (mission, `goals` — optional milestones the
 CTO set, big-picture marks like a follower count — and `budget`),
 `projects` (every project on the board — the ship is a department, not a
 folder's owner), `agents` (with `last_run`), `recent_runs` (summaries + `assets`),
-`open_tasks` (with `human_qa`), `answered_questions`, `captain_log` (your last
-entries), `plugins` (what the ship's agents may use), `models` and
+`feedback` (the CTO's responses to runs — see below), `open_tasks` (with
+`human_qa`), `answered_questions`, `captain_log` (your last entries), `plugins` (what the ship's agents may use), `models` and
 `instructions` (global + ship: API notes, folders, house rules). The Overboard MCP tools (`get_recent_runs`,
 `get_project_context`, `get_commits`, `get_project_events`) are there if a
 summary isn't enough. Don't go looking elsewhere for context.
 
 ## 2. Review — every agent, every goal
 
-- **Answers first.** Each `answered_questions` entry unblocks something; act
-  on it before anything else.
+- **Feedback and answers first.** `feedback` lists runs the CTO wrote a
+  response on: the run (`run_id`, `agent`, its `summary`) and what they said.
+  It is the owner looking at the work and telling you what to change, so act
+  on each entry before anything else — fix the agent or the task prompt
+  (`update_agent`, or a new `create_task` that carries their words), re-run
+  it, or drop the line of work — and say in the log what you did with it.
+  The same text sits on the run in `recent_runs` as `cto_feedback` for
+  context; only `feedback` is new to you. Each `answered_questions` entry
+  unblocks something; act on it next.
 - **Every agent:** still useful for a goal? Did its last run finish, fail,
   time out, stall? A run that keeps timing out gets a shorter timeout or a
   narrower command, not a retry. An agent that has done its job gets
