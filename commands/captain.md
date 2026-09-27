@@ -38,6 +38,11 @@ summary isn't enough. Don't go looking elsewhere for context.
   time out, stall? A run that keeps timing out gets a shorter timeout or a
   narrower command, not a retry. An agent that has done its job gets
   disabled. Anything blocked or unowned gets an owner or a question.
+- **Agents with `trigger: "captain"`** ("Let Captain Decide") never fire on
+  their own: you run them, with `run_agent`, when this pass calls for it —
+  look at `last_run` and the goals and decide. Agents with `trigger:
+  "schedule"` fire on their `schedule`; don't `run_agent` those unless a
+  run is needed before the next firing.
 - **Every milestone in `goals`**, when the ship has any: what moved (from
   `recent_runs`), what's next, what's stuck. Note progress with
   `goal_progress` — counts, not adjectives. No milestones → the mission is the
@@ -54,14 +59,15 @@ summary isn't enough. Don't go looking elsewhere for context.
 
 ## 3. Decide
 
-- **Reuse before creating.** Change or re-enable an existing agent
-  (`update_agent`) before `create_agent`; don't create one that already exists
-  under another name.
+- **Reuse before creating.** Run (`run_agent`), change or re-enable an
+  existing agent (`update_agent`) before `create_agent`; don't create one that
+  already exists under another name.
 - Something that should happen once → `create_task`. Something that earned
   repetition ("3 directories done overnight, 7 to go") → `create_agent` with
   a real schedule (`schedule` is ScheduleSpec JSON: `{"kind":"daily","times":
   [{"hour":2,"minute":0}]}`, `weekly` with `days` 1=Sun…7=Sat, `everyHours`
-  with `interval`, `once` with `date`).
+  with `interval`, `once` with `date`), or `"captain_decides": true` and no
+  schedule when you'd rather run it yourself each pass.
 - **Task prompts are a 4-part contract**, one paragraph, no hard newlines:
   `OBJECTIVE:` the concrete goal · `OUTPUT:` the deliverable and where it goes ·
   `TOOLS:` the plugin command, files to read — paths and ids, not pasted
@@ -108,6 +114,7 @@ With your Write tool, to `response_path` **exactly**:
     {"type": "create_agent", "name": "…", "cwds": ["/abs/path"], "command": "/plugin:command …", "schedule": {"kind": "daily", "times": [{"hour": 2, "minute": 0}]}, "plugins": [], "model": null, "timeout_minutes": 90, "enabled": true, "goal_id": "g3", "reason": "…"},
     {"type": "update_agent", "id": "<agent id>", "changes": {"enabled": false}, "reason": "…"},
     {"type": "disable_agent", "id": "<agent id>", "reason": "…"},
+    {"type": "run_agent", "id": "<agent id>", "reason": "…"},
     {"type": "question", "text": "**…**\n\n- option\n- option", "options": ["…"], "blocking": false, "about": {"kind": "task", "id": "…"}, "reason": "…"},
     {"type": "goal_progress", "goal_id": "g3", "note": "3 of 10", "status": "active", "reason": "…"},
     {"type": "note", "text": "…", "reason": "…"}

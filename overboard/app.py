@@ -572,11 +572,11 @@ class Api:
                 store.save_state(self.state)
             except Exception:  # discovery must never block startup
                 pass
-        # Static analysis is free (no API), so pre-warm it in the background so
-        # every project's details are ready without the user asking.
-        self._kick_analyses()
-        self._kick_sync()
-        self._kick_event_compact()
+        # Background pre-warm (analyses / sync / event compaction) is kicked by
+        # run_dashboard AFTER the bind succeeds, not here: the "port taken" path
+        # also builds an Api and exits right away, and daemon threads still
+        # writing to stderr at interpreter shutdown abort the process
+        # (Fatal Python error: _enter_buffered_busy ... at interpreter shutdown).
 
     # ---- auto refresh ---------------------------------------------------
     # How stale `last_refresh` may get before the server refreshes on its own.
@@ -786,9 +786,7 @@ class Api:
             self._refreshing = False
         # New commits may have moved a clone's HEAD — re-run analysis in the
         # background so details stay current without a button.
-        self._kick_analyses()
-        self._kick_sync()
-        self._kick_event_compact()
+        self.start_background_prewarm()
         return self._build_view()
 
     def tick(self) -> dict:
@@ -1152,6 +1150,15 @@ class Api:
         self.state.setdefault("analysis", {})[slug] = result
         store.save_state(self.state)
         return self._overlay_ai(slug, result)
+
+    def start_background_prewarm(self) -> None:
+        """Kick the daemon passes that keep cached data fresh (static analyses,
+        remote sync status, event-log compaction). Called once by run_dashboard
+        after the HTTP bind — the single-instance lock — succeeds, and again on
+        every refresh."""
+        self._kick_analyses()
+        self._kick_sync()
+        self._kick_event_compact()
 
     def _kick_analyses(self) -> None:
         """Spawn a background pass that analyzes every local clone whose cache is
@@ -1640,6 +1647,10 @@ def run_dashboard(config: dict, port: int, prefer_window: bool,
     # and the periodic refresh.
     api.scheduler.start()
     api.start_auto_refresh()
+    # Static analysis is free (no API), so pre-warm it in the background so
+    # every project's details are ready without the user asking. Only the one
+    # live server does this — see the note in Api.__init__.
+    api.start_background_prewarm()
     # Dispatch records left mid-flight by the previous process get reconciled
     # against the scheduler's re-adopted/finished runs.
     try:
