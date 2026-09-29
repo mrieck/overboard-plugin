@@ -26,7 +26,7 @@ CTO set, big-picture marks like a follower count — and `budget`),
 `projects` (every project on the board — the ship is a department, not a
 folder's owner), `agents` (with `last_run`), `recent_runs` (summaries + `assets`),
 `feedback` (the CTO's responses to runs — see below), `open_tasks` (with
-`human_qa`), `answered_questions`, `captain_log` (your last entries), `plugins` (what the ship's agents may use), `models` and
+`human_qa`), `answered_questions`, `captain_log` (your last entries), `plugins` (what the ship's agents may use), `models`, `efforts` and
 `instructions` (global + ship: API notes, folders, house rules). The Overboard MCP tools (`get_recent_runs`,
 `get_project_context`, `get_commits`, `get_project_events`) are there if a
 summary isn't enough. Don't go looking elsewhere for context.
@@ -85,7 +85,8 @@ summary isn't enough. Don't go looking elsewhere for context.
   from goals and instructions; don't add rules or taste they didn't state.
   Don't copy `instructions` into the prompt — the app appends them.
 - `plugins` ids only from the request's list; `model` a `key` from `models`,
-  or null. `project_path`<!-- agents --> and `cwds`<!-- /agents --> must be existing folders under one of
+  or null; `effort` a level from `efforts` for that model's provider, or null
+  (the CTO's default) — raise it only for work that needs deep reasoning. `project_path`<!-- agents --> and `cwds`<!-- /agents --> must be existing folders under one of
   `projects` or `root_folder`. Pick the project the work is about: any on
   the board is fair game, and a project's tools (a repo with an API key and
   scripts for it) can serve another ship's goal.
@@ -120,9 +121,9 @@ With your Write tool, to `response_path` **exactly**:
   "log_entry": "<the ship's log for today, ≤1200 chars markdown; first line is the substance>",
   "memory_updated": true,
   "actions": [
-    {"type": "create_task", "title": "…", "prompt": "OBJECTIVE: … OUTPUT: … TOOLS: … BOUNDARIES: …", "project_path": "/abs/path", "plugins": [], "model": null, "when": "now", "timeout_minutes": 45, "priority": 1, "goal_id": "g1", "reason": "…"},
+    {"type": "create_task", "title": "…", "prompt": "OBJECTIVE: … OUTPUT: … TOOLS: … BOUNDARIES: …", "project_path": "/abs/path", "plugins": [], "model": null, "effort": null, "when": "now", "timeout_minutes": 45, "priority": 1, "goal_id": "g1", "reason": "…"},
 <!-- agents -->
-    {"type": "create_agent", "name": "…", "cwds": ["/abs/path"], "command": "/plugin:command …", "schedule": {"kind": "daily", "times": [{"hour": 2, "minute": 0}]}, "plugins": [], "model": null, "timeout_minutes": 90, "enabled": true, "goal_id": "g3", "reason": "…"},
+    {"type": "create_agent", "name": "…", "cwds": ["/abs/path"], "command": "/plugin:command …", "schedule": {"kind": "daily", "times": [{"hour": 2, "minute": 0}]}, "plugins": [], "model": null, "effort": null, "timeout_minutes": 90, "enabled": true, "goal_id": "g3", "reason": "…"},
     {"type": "update_agent", "id": "<agent id>", "changes": {"enabled": false}, "reason": "…"},
     {"type": "disable_agent", "id": "<agent id>", "reason": "…"},
 <!-- /agents -->

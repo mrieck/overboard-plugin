@@ -112,7 +112,7 @@ workspace with exactly those plugins enabled (on top of the user scope);
 with `[]` it runs straight in the project folder. Only ids from the list
 count — anything else is dropped.
 
-## 2c. Pick the model
+## 2c. Pick the model and effort
 
 The request file's `models` array lists what a task can run on:
 `{key, label, provider}` — each provider's default (`"claude"`, `"codex"`) and
@@ -125,6 +125,17 @@ omit it — the task runs on Claude with the CTO's default model. The prompt is
 still relayed as written. Codex tasks run right away only — with a Codex
 model, don't set a future `when`. A follow-up ignores `model`: a task
 continues on the provider it started with.
+
+`efforts` (optional) lists the reasoning-effort levels each provider takes,
+keyed by provider (`{"claude": ["low", …, "max"], "codex": [...]}`). If the
+message names an effort ("at max effort", "think hard, high effort", "low
+effort is fine"), set `task.effort` to the matching level. Otherwise omit it —
+the task runs at the CTO's default effort. A follow-up ignores `effort`.
+
+`pinned_model` / `pinned_effort` (optional) are what the CTO picked by hand in
+the Mac app's composer. When set, the app runs the task on that model or
+effort whatever you write — leave the matching `task.model` / `task.effort`
+null (but keep Codex's rule: with a Codex `pinned_model`, no future `when`).
 
 ## 3. Relay the task prompt — don't rewrite it
 
@@ -158,14 +169,16 @@ Write this JSON — with your Write tool, to `response_path` **exactly**:
     "when": "now",
     "timeout_minutes": 90,
     "plugins": ["<plugin id from the request's plugins list>"],
-    "model": null
+    "model": null,
+    "effort": null
   },
   "reason": null
 }
 ```
 
 (`"version": 2` is fine too — both are read. `"model"` is a `key` from the
-request's `models` list, or null.) Don't add reporting
+request's `models` list, or null; `"effort"` a level from its `efforts`, or
+null.) Don't add reporting
 instructions to the prompt: Overboard appends its own result contract (a
 `result.json` the worker writes) so it can show the CTO the summary and send
 the files.
