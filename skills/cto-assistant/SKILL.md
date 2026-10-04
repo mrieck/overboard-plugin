@@ -76,6 +76,9 @@ open questions, then your flags), *Shipped*, *Ships* and *Ran since
 last report* from `get_recent_runs`, *Direction* when a launch deserves a word;
 no URL, browser, loop or on-demand talk). Overboard runs **on demand**, not as a
 permanent heartbeat.
+When `get_pending_work` returns `one_shot: true` (the Mac app launched this
+session and closes it after the report), **never start `/loop` or schedule
+another pass** — deferred projects wait for the next sweep.
 Under `/loop`, keep looping **only while there's a backlog to drain** — projects
 still `deferred` (waiting for a heavy-work slot), or pending work left to write —
 and **stop the loop once the board is caught up**: a pass with nothing to do (or

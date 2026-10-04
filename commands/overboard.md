@@ -42,6 +42,10 @@ it's caught up, **stop** — an idle 30-minute heartbeat burns the user's
 subscription for nothing (their team's work lands over hours-to-days, not
 minutes).
 
+- **If `get_pending_work` returned `one_shot: true`, never loop.** The Mac app
+  launched this session and closes it as soon as the report is written, so a
+  scheduled pass would never run — it only blocks the exit. Do the one pass,
+  write the report (step 4), and leave anything `deferred` for the next sweep.
 - **If your step-2 pass left nothing `deferred` and nothing else pending, you're
   already done** — write the report (step 4) and **do not start a loop.**
 - **If projects were `deferred` (or work is still pending), drain the backlog:**
