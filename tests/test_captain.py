@@ -18,7 +18,9 @@ class CaptainParseTests(unittest.TestCase):
         out = captain.parse_response(fixture("marketing_full.json"))
         self.assertTrue(out["ok"], out)
         self.assertEqual([a["type"] for a in out["actions"]],
-                         ["create_task", "create_agent", "update_agent", "question", "goal_progress", "note"])
+                         ["create_task", "create_agent", "update_agent", "question", "run_agent",
+                          "goal_progress", "todo_done", "note"])
+        self.assertEqual(out["actions"][0]["todo_id"], "t2")
         self.assertEqual(out["actions"][1]["plugins"], ["socialcue@socialcue"])   # bare string → list
         self.assertTrue(out["memory_updated"])
         self.assertEqual(out["dropped"], [])

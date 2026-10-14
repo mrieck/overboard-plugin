@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 
 ACTION_TYPES = ("create_task", "create_agent", "update_agent", "disable_agent",
-                "question", "goal_progress", "note")
+                "run_agent", "question", "goal_progress", "todo_done", "note")
 DEFAULT_LIMITS = {"question_max_chars": 700, "log_entry_max_chars": 1200}
 
 

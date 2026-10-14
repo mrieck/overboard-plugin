@@ -22,7 +22,8 @@ This pass's request file:
 
 Read the JSON at `{{request_path}}`, then `memory_path` (your memory for this ship).
 The request has everything: `ship` (mission, `goals` — optional milestones the
-CTO set, big-picture marks like a follower count — and `budget`),
+CTO set, big-picture marks like a follower count — `todos` — the CTO's to-do
+list, direct asks — and `budget`),
 `projects` (every project on the board — the ship is a department, not a
 folder's owner), `agents` (with `last_run`), `recent_runs` (summaries + `assets`),
 `feedback` (the CTO's responses to runs — see below), `open_tasks` (with
@@ -42,6 +43,15 @@ summary isn't enough. Don't go looking elsewhere for context.
   The same text sits on the run in `recent_runs` as `cto_feedback` for
   context; only `feedback` is new to you. Each `answered_questions` entry
   unblocks something; act on it next.
+- **The CTO's to-dos.** Each item in `ship.todos` is something the owner
+  asked for directly, in their own words ("mock up a few mascot icons, then
+  wait for my feedback"). Act on every one this pass: a `create_task` that
+  carries their words and the item's `todo_id`, a `run_agent`, or a
+  `question` if it is unclear. `tasks` lists what you already started for it
+  — don't start it again while one is under way. Do what the text says,
+  including "wait for feedback": deliver, then ask, and keep the item open
+  until the feedback is in. Close it with `todo_done` and a `note` naming
+  what was delivered, only once it is actually done.
 - **Every agent:** still useful for a goal? Did its last run finish, fail,
   time out, stall? <!-- agents -->A run that keeps timing out gets a shorter timeout or a
   narrower command, not a retry. An agent that has done its job gets
@@ -121,7 +131,7 @@ With your Write tool, to `response_path` **exactly**:
   "log_entry": "<the ship's log for today, ≤1200 chars markdown; first line is the substance>",
   "memory_updated": true,
   "actions": [
-    {"type": "create_task", "title": "…", "prompt": "OBJECTIVE: … OUTPUT: … TOOLS: … BOUNDARIES: …", "project_path": "/abs/path", "plugins": [], "model": null, "effort": null, "when": "now", "timeout_minutes": 45, "priority": 1, "goal_id": "g1", "reason": "…"},
+    {"type": "create_task", "title": "…", "prompt": "OBJECTIVE: … OUTPUT: … TOOLS: … BOUNDARIES: …", "project_path": "/abs/path", "plugins": [], "model": null, "effort": null, "when": "now", "timeout_minutes": 45, "priority": 1, "goal_id": "g1", "todo_id": "t1", "reason": "…"},
 <!-- agents -->
     {"type": "create_agent", "name": "…", "cwds": ["/abs/path"], "command": "/plugin:command …", "schedule": {"kind": "daily", "times": [{"hour": 2, "minute": 0}]}, "plugins": [], "model": null, "effort": null, "timeout_minutes": 90, "enabled": true, "goal_id": "g3", "reason": "…"},
     {"type": "update_agent", "id": "<agent id>", "changes": {"enabled": false}, "reason": "…"},
@@ -130,6 +140,7 @@ With your Write tool, to `response_path` **exactly**:
     {"type": "run_agent", "id": "<agent id>", "reason": "…"},
     {"type": "question", "text": "**…**\n\n- option\n- option", "options": ["…"], "blocking": false, "about": {"kind": "task", "id": "…"}, "reason": "…"},
     {"type": "goal_progress", "goal_id": "g3", "note": "3 of 10", "status": "active", "reason": "…"},
+    {"type": "todo_done", "todo_id": "t1", "note": "3 mascot icon mockups delivered (run …); CTO picked #2", "reason": "…"},
     {"type": "note", "text": "…", "reason": "…"}
   ]
 }
