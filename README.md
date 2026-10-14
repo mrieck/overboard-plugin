@@ -81,7 +81,9 @@ plugin's commands and skills) and `~/` `./` `/` paths, and warns when the
 command's plugin isn't enabled in that folder — with an **Enable** button.
 
 Runs launch inside [Herdr](https://herdr.dev) (macOS and Linux) as
-`claude --permission-mode auto`, one workspace per project (named after the
+`claude --permission-mode auto` (or, when your Claude Code settings set
+`permissions.defaultMode`, with no mode flag so the run inherits yours), one
+workspace per project (named after the
 project folder) with one tab per run named after the task, so you can watch
 or take over any run in Herdr's own UI. Each run is identified by its own
 Claude session (captured from the SessionStart hook), so a session of yours in

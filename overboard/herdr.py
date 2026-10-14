@@ -10,7 +10,8 @@ Launch semantics (mirrors HerdrLauncher, including its live-debugged gotchas):
 one workspace per project labelled after the project folder (the assistant's
 own sessions share an "Assistant" workspace), one tab per run labelled after
 the task, `agent.start` kind "claude" with --permission-mode auto (never
-`claude -p`). Unlike the Mac app this runs in the user's default Herdr session,
+`claude -p`) — or with no mode flag when the user's own Claude Code settings
+set permissions.defaultMode, so the run inherits their mode. Unlike the Mac app this runs in the user's default Herdr session,
 so a project workspace may be one the user already has open for that repo;
 Overboard only ever closes tabs it created (matched by its own run labels). `agent.start`
 returns while `launch_pending` is still true and prompts are rejected with
@@ -148,6 +149,29 @@ def workspace_label(project_dir: str) -> str:
     return name or FALLBACK_WORKSPACE
 
 
+def claude_default_mode(cwd):
+    """The user's own ``permissions.defaultMode`` from Claude Code's settings
+    files, in claude's precedence order (project local, project, user local,
+    user), or None. A ``--permission-mode`` flag would outrank these files,
+    so a run meant to inherit the user's mode must not pass one."""
+    home = os.path.expanduser("~")
+    candidates = [
+        os.path.join(cwd, ".claude", "settings.local.json"),
+        os.path.join(cwd, ".claude", "settings.json"),
+        os.path.join(home, ".claude", "settings.local.json"),
+        os.path.join(home, ".claude", "settings.json"),
+    ]
+    for path in candidates:
+        try:
+            with open(path) as f:
+                mode = (json.load(f).get("permissions") or {}).get("defaultMode")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(mode, str) and mode.strip():
+            return mode
+    return None
+
+
 def agent_name(slot_name: str) -> str:
     """Herdr agent names are identifiers, not prose: slug + short suffix so two
     runs of one slot don't collide."""
@@ -211,7 +235,7 @@ def launch(cwd: str, name: str, prompt: str, ready_timeout: float = 45.0,
     ensure_server()
     aname = agent_name(name)
     pane = _pane_for_run(cwd, name, group or workspace_label(cwd))
-    args = ["--permission-mode", "auto"]
+    args = [] if claude_default_mode(cwd) else ["--permission-mode", "auto"]
     for d in add_dirs or []:
         if d:
             args += ["--add-dir", str(d)]
