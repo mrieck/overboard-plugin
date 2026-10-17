@@ -849,6 +849,7 @@ function eventLabel(e) {
     case "SessionStart": return "session started";
     case "SessionEnd": return "session ended";
     case "flag": return e.note ? `⚑ ${e.note.slice(0, 80)}` : "flagged for review";
+    case "flag_update": return e.note ? `⚑ flag updated: ${e.note.slice(0, 80)}` : "⚑ flag retracted";
     case "status": return e.note ? e.note.slice(0, 80) : "status";
     default: return e.type;
   }

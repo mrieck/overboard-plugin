@@ -514,12 +514,70 @@ def flag_for_review(project: str, note: str):
     if not slug:
         return f"unknown project {project!r} (call get_pending_work / list_projects)"
     clipped, orig, trimmed = _clip_note(note)
-    events.append_event({"ts": time.time(), "type": "flag", "repo_hint": slug, "note": clipped})
-    msg = f"flagged for review on {project}"
+    evt = {"ts": time.time(), "type": "flag", "repo_hint": slug, "note": clipped}
+    evt["id"] = events.flag_id(evt)
+    events.append_event(evt)
+    msg = f"flagged for review on {project} (flag {evt['id']})"
     if trimmed:
         msg += (f" — note was {orig} chars and was trimmed to fit; "
                 f"flags should be one line, so shorten it next time")
     return msg
+
+
+def _project_of(state: dict, slug: str) -> str:
+    for name, p in state.get("projects", {}).items():
+        if slug in p.get("repos", {}):
+            return name
+    return slug
+
+
+def _open_flags(state: dict, slug: str) -> list[dict]:
+    """Flags still standing on a repo: the assistant's updates applied, the
+    CTO's dashboard dismissals ("OK") filtered out."""
+    project = _project_of(state, slug)
+    dismissed = set(state.get("dismissed_reviews", []))
+    return [{**f, "project": project}
+            for f in events.open_flags(events.events_by_repo(state).get(slug, []))
+            if store.review_key(project, f["note"]) not in dismissed]
+
+
+def list_flags(project: str = ""):
+    """Open flags, newest first — every project's, or one project's."""
+    state = store.load_state()
+    if project:
+        slug = _resolve_to_slug(state, project)
+        if not slug:
+            return f"unknown project {project!r} (call get_pending_work / list_projects)"
+        slugs = [slug]
+    else:
+        slugs = sorted(events.events_by_repo(state))
+    flags = [f for s in slugs for f in _open_flags(state, s)]
+    flags.sort(key=lambda f: f.get("ts", 0), reverse=True)
+    return {"flags": flags}
+
+
+def update_flag(project: str, flag: str, note: str = "", reason: str = ""):
+    """Rewrite an open flag (note given) or retract it (no note). `flag` is the
+    id flag_for_review / list_flags returned, or the flag's exact current text."""
+    state = store.load_state()
+    slug = _resolve_to_slug(state, project)
+    if not slug:
+        return f"unknown project {project!r} (call get_pending_work / list_projects)"
+    key = (flag or "").strip()
+    open_ = _open_flags(state, slug)
+    hit = next((f for f in open_ if f["id"] == key), None) or next((f for f in open_ if f["note"] == key), None)
+    if not hit:
+        ids = ", ".join(f["id"] for f in open_) or "none"
+        return f"no open flag {flag!r} on {project} (open flags: {ids}; call list_flags)"
+    clipped, orig, trimmed = _clip_note(note)
+    events.append_event({"ts": time.time(), "type": "flag_update", "repo_hint": slug,
+                         "flag_id": hit["id"], "note": clipped or None, "reason": (reason or "").strip()[:300]})
+    if clipped:
+        msg = f"flag {hit['id']} on {project} now reads: {clipped}"
+        if trimmed:
+            msg += f" — note was {orig} chars and was trimmed to fit"
+        return msg
+    return f"flag {hit['id']} on {project} retracted"
 
 
 def record_status(project: str, note: str):
@@ -609,6 +667,8 @@ TOOLS = [
     ("set_data_shape", "Set a repo's data model / DB shape (this replaces the static schema scanner, which only knows SQL/Prisma/Django). items: list of {name, kind (table|collection|entity|model|type), fields (list of 'name: type' strings), file, line, note}. Read the actual clone — works for ANY stack: SQL DDL, Prisma, Django/SQLAlchemy, JPA/Hibernate @Entity, .NET EF DbContext, Mongoose/Mongo collections, GORM, ActiveRecord, Diesel. Empty if the repo has no persistent data model.", {"slug": _S, "items": _OBJ_ARR}, ["slug", "items"], set_data_shape),
     ("set_grouping", "Set how repos cluster into projects AND each project's display name (replaces the prefix-stem guess). groups: list of {key, display, repos:[slug]}. Give one group per real product. `key` is a STABLE identity string: reuse the same key across re-groups and NEVER rename it (rename by editing `display` only) — the key is how summaries/digests/launches stay attached. `display` is the human name shown in the sidebar. Cover every slug from get_pending_work's all_repos / list_projects.", {"groups": _OBJ_ARR}, ["groups"], set_grouping),
     ("flag_for_review", "Flag something the CTO must know or act on — NOT a feature recap. Use for: something the human has to do (from a finished-work message — restart, add a key, decide, review a risky change), a non-obvious gotcha in how it now works, or an assumption the Claude made. Never flag 'added feature X'. project may be a group name or repo slug; note is the one specific thing.", {"project": _S, "note": _S}, ["project", "note"], flag_for_review),
+    ("list_flags", "The open flags (flag_for_review items the CTO has not dismissed), newest first, each {id, note, ts, repo, project}. All projects, or one when project is given. Check it before raising a flag that may already exist, and to find the id for update_flag.", {"project": _S}, [], list_flags),
+    ("update_flag", "Rewrite or retract one of your flags when new information changes it: the CTO says it is handled or wrong, a later run resolved it, or a sweep corrected the facts. flag is the id flag_for_review/list_flags returned (or the flag's exact current text). With note: the flag now reads that (one line, the corrected thing). Without note: the flag is retracted and leaves the dashboard. reason is one line for the record. Never retract a flag just because it is old or you cannot verify it — only when it no longer holds.", {"project": _S, "flag": _S, "note": _S, "reason": _S}, ["project", "flag"], update_flag),
     ("record_status", "Post a short status line to a project's activity feed. Accepts a project group name or a repo slug.", {"project": _S, "note": _S}, ["project", "note"], record_status),
     ("launch_dashboard", "Start the Overboard dashboard web server (if not already running) and return its URL.", {}, [], launch_dashboard),
     # ---- run journal: only meaningful inside a session the Mac app launched ----

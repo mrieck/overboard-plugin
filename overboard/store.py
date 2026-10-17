@@ -320,3 +320,9 @@ def _atomic_write(path: Path, data: dict) -> None:
         except OSError:
             pass
         raise
+
+
+def review_key(project: str, text: str) -> str:
+    """Stable content key for a review item / flag, so a dismissed item stays
+    dismissed across refreshes (and re-appears only if its text changes)."""
+    return hashlib.sha1(f"{project}\0{text}".encode()).hexdigest()

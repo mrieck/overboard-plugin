@@ -69,6 +69,14 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
      want to override.
    Do NOT flag "added feature X" / "did the task" — the CTO requested that work
    and already knows what was built. If nothing clears that bar, flag nothing.
+   **Flags are yours to keep right.** `flag_for_review` returns the flag's id and
+   `list_flags(project?)` shows what is still open (the CTO's dashboard
+   dismissals already removed). When new information changes a flag — the CTO
+   tells you it is handled or mistaken, a later run resolves it, you corrected
+   the facts — call **`update_flag(project, flag, note)`** to rewrite it, or
+   **`update_flag(project, flag)`** with no note to retract it; it leaves the
+   dashboard at once. Check `list_flags` before raising a flag that may already
+   be there. Never retract a flag only because it is old or unverified.
 
 Then write the **morning report** (the closing message — its exact shape is in
 the `/overboard` command: opening sentence, *Needs you* first (the ships'

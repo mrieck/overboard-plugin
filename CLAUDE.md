@@ -90,6 +90,9 @@ don't reintroduce dependencies. Paths resolve via `${CLAUDE_PLUGIN_ROOT}` and
   sweep's report can give each one a Direction line. One active launch per project;
   completed ones move to `past_launches`.
 - `events.jsonl` — append-only (hooks + flags/status). Safe by construction.
+  A flag is never edited in place: `update_flag` appends a `flag_update`
+  event (`flag_id` + new `note`, or no note to retract) and
+  `events.open_flags` folds them when the dashboard or `list_flags` reads.
   The dashboard compacts it in the background (`events.maybe_compact`): 30-day
   retention + 5 MB cap, at most once a day. Hooks never trim — they must stay
   append-only and non-blocking; compaction re-appends any tail written during

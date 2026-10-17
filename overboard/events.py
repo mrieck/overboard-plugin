@@ -6,6 +6,7 @@ manager. Same on-disk path as the hook, sourced from store.STATE_DIR."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -76,6 +77,36 @@ def events_by_repo(state: dict, since_ts: float = 0.0) -> dict[str, list[dict]]:
         if slug:
             grouped.setdefault(slug, []).append({**e, "repo": slug})
     return grouped
+
+
+def flag_id(evt: dict) -> str:
+    """A flag's stable id. Stored on the event when it is raised; derived the
+    same way for flags raised before ids existed, so every flag is addressable
+    by `update_flag`."""
+    if evt.get("id"):
+        return str(evt["id"])
+    raw = f"{evt.get('ts')}\0{evt.get('repo_hint') or evt.get('repo') or ''}\0{evt.get('note') or ''}"
+    return hashlib.sha1(raw.encode()).hexdigest()[:8]
+
+
+def open_flags(evs: list[dict]) -> list[dict]:
+    """The flags still standing in one repo's events, oldest first, after the
+    assistant's own `flag_update` events are applied: a later update with a
+    `note` rewrites the flag's text, one without retracts it. Each entry is
+    ``{"id", "note", "ts", "repo"}``."""
+    flags: dict[str, dict] = {}
+    for e in sorted(evs, key=lambda e: e.get("ts", 0)):
+        t = e.get("type")
+        if t == "flag" and e.get("note"):
+            fid = flag_id(e)
+            flags[fid] = {"id": fid, "note": e["note"], "ts": e.get("ts", 0),
+                          "repo": e.get("repo") or e.get("repo_hint")}
+        elif t == "flag_update" and e.get("flag_id") in flags:
+            if e.get("note"):
+                flags[e["flag_id"]]["note"] = e["note"]
+            else:
+                del flags[e["flag_id"]]
+    return list(flags.values())
 
 
 def append_event(evt: dict) -> None:

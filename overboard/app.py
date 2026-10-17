@@ -72,10 +72,7 @@ def _days_until(date_str: str):
     return (d - datetime.now().astimezone().date()).days
 
 
-def _review_key(project: str, text: str) -> str:
-    """Stable content key for a review item, so a dismissed item stays dismissed
-    across refreshes (and re-appears only if its text actually changes)."""
-    return hashlib.sha1(f"{project}\0{text}".encode()).hexdigest()
+_review_key = store.review_key  # dismissals are keyed the same way the MCP server reads them
 
 
 def _prefix_group(slugs: list[str]) -> dict[str, list[str]]:
@@ -665,8 +662,9 @@ class Api:
                     continue
                 for e in a.get("recent", []):
                     feed.append({**e, "repo": slug})
-                    if e.get("type") == "flag" and e.get("note"):
-                        flags.append(e["note"])
+                # Flags the assistant has since rewritten or retracted
+                # (flag_update events) show their current text or not at all.
+                flags.extend(f["note"] for f in events.open_flags(a.get("recent", [])))
             feed.sort(key=lambda e: e.get("ts", 0), reverse=True)
             # AI content is overlaid from the agent-owned ai.json. Human-flagged
             # items come first, then the agent's digest review items. Anything
