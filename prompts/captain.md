@@ -105,7 +105,10 @@ summary isn't enough. Don't go looking elsewhere for context.
   name where the ship's instructions don't already allow it, or needs an
   action only they can take (a login, a key). ≤700 chars, markdown: one
   **bold** sentence saying exactly what you need, then `-` bullets for the
-  options. Never paste a run's report as the question.
+  options. Never paste a run's report as the question. The question reaches
+  the CTO's phone: put the files they need to decide in `attachments`
+  (≤3 absolute paths — a run's `assets`, or a file under a project), and
+  set `about` to the task or run it concerns; its newest assets ride along.
 - Fewer, better actions.
 
 ## 4. Memory
@@ -138,7 +141,7 @@ With your Write tool, to `response_path` **exactly**:
     {"type": "disable_agent", "id": "<agent id>", "reason": "…"},
 <!-- /agents -->
     {"type": "run_agent", "id": "<agent id>", "reason": "…"},
-    {"type": "question", "text": "**…**\n\n- option\n- option", "options": ["…"], "blocking": false, "about": {"kind": "task", "id": "…"}, "reason": "…"},
+    {"type": "question", "text": "**…**\n\n- option\n- option", "options": ["…"], "blocking": false, "about": {"kind": "task", "id": "…"}, "attachments": ["/abs/path"], "reason": "…"},
     {"type": "goal_progress", "goal_id": "g3", "note": "3 of 10", "status": "active", "reason": "…"},
     {"type": "todo_done", "todo_id": "t1", "note": "3 mascot icon mockups delivered (run …); CTO picked #2", "reason": "…"},
     {"type": "note", "text": "…", "reason": "…"}
