@@ -63,10 +63,10 @@ minutes).
 > only items are `need_launch` reminders (no code moved) counts as caught up —
 > the launch countdowns already show in the sidebar, so never wake just for them.
 
-## 4. Write the morning report
+## 4. Write the report
 
 Your closing message **is** the report — the Mac app shows it as the latest
-"Morning report" and lists its first line in the history, so the first line must
+"Project sweep" and lists its first line in the history, so the first line must
 carry the substance. The shape below is a guide, not a checklist: you decide
 what is worth the CTO's attention this pass, and you leave out anything that
 isn't. Loose rules on purpose.

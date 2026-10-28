@@ -78,7 +78,7 @@ Run this each pass (it's what `/overboard` and the `/loop` call do):
    dashboard at once. Check `list_flags` before raising a flag that may already
    be there. Never retract a flag only because it is old or unverified.
 
-Then write the **morning report** (the closing message — its exact shape is in
+Then write the **report** (the closing message — its exact shape is in
 the `/overboard` command: opening sentence, *Needs you* first (the ships'
 open questions, then your flags), *Shipped*, *Ships* and *Ran since
 last report* from `get_recent_runs`, *Direction* when a launch deserves a word;

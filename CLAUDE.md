@@ -18,8 +18,8 @@ hold this framing — it should shape naming, copy, and behavior:
 Prefer this vocabulary in user-facing copy: "your sessions", "assistant",
 "report", "flag for review". Avoid "project manager" / "PM". **Public
 positioning (2026-09-01):** lead with the concrete job — scheduled, unattended
-Claude Code runs on your subscription, no API key, no cloud — and the morning
-report; do not pitch the product as "the CTO's assistant / chief of staff",
+Claude Code runs on your subscription, no API key, no cloud — and the report
+of what shipped; do not pitch the product as "the CTO's assistant / chief of staff",
 "the manager", "the crew", or "a fleet" in marketing copy. Internal identifiers
 (`skills/cto-assistant`, prompt text in `commands/` and `agents/`) still use the
 older CTO vocabulary; that's fine — it's addressed to Claude, not customers.

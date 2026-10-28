@@ -42,7 +42,7 @@ DEFAULT_WINDOW = timedelta(hours=24)
 # Legacy prefixes from before runs were named after their task.
 _DISPATCH_TASK_PREFIX = "Dispatch: "
 _DISPATCHER_PREFIXES = ("Dispatcher #", "Overboard dispatch ")
-_SWEEP_NAMES = ("Morning report", "Overboard sweep")
+_SWEEP_NAMES = ("Project sweep", "Morning report", "Overboard sweep")
 
 
 def _project(cwd: str, project_dir: "str | None") -> str:
@@ -51,7 +51,7 @@ def _project(cwd: str, project_dir: "str | None") -> str:
 
 
 def _kind(name: str, command: str) -> str:
-    if command == SWEEP_COMMAND or name in _SWEEP_NAMES or name.startswith("Morning report"):
+    if command == SWEEP_COMMAND or name in _SWEEP_NAMES or name.startswith(_SWEEP_NAMES):
         return "sweep"
     if name.startswith(_DISPATCHER_PREFIXES):
         return "dispatcher"
